@@ -295,11 +295,14 @@ async function handleFilesList(
   }
 
   const fldId = url.searchParams.get('fld_id')?.trim() ?? '';
+  const rawPage = Number(url.searchParams.get('page') ?? '1');
+  const page = Number.isFinite(rawPage) && rawPage >= 1 ? Math.floor(rawPage) : 1;
 
   try {
     const params = new URLSearchParams({
       key,
-      per_page: '50',
+      per_page: '100',
+      page: String(page),
     });
     if (fldId) {
       params.set('fld_id', fldId);

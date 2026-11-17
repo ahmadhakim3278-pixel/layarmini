@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ArrowLeft,
   Bookmark,
   Check,
   ChevronLeft,
@@ -9,7 +10,6 @@ import {
   Play,
   RotateCcw,
   Share2,
-  X,
 } from 'lucide-react';
 import type { DramaSeries, Episode } from '../types/drama';
 import { buildAutoplayStreamUrl } from '../utils/doodstream';
@@ -189,22 +189,35 @@ export function LayarMiniStreamPlayer({
               : 'pointer-events-none opacity-0 -translate-y-2'
           }`}
         >
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="h-1.5 w-1.5 rounded-full bg-[#E11D48]" aria-hidden="true" />
-              <p className="font-mono text-[11px] font-semibold tracking-wide text-amber-300 tabular-nums">
-                EP {episode.number} / {series.episodes.length}
+          <div className="flex min-w-0 items-start gap-2.5">
+            <button
+              type="button"
+              tabIndex={showOverlays ? 0 : -1}
+              onClick={onClose}
+              aria-label="Kembali ke halaman utama"
+              title="Kembali ke halaman utama"
+              className="lg:hidden flex min-h-[40px] min-w-[40px] shrink-0 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur-sm transition-colors hover:bg-black/85 cursor-pointer focus-visible:outline-2 focus-visible:outline-[#E11D48]"
+            >
+              <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+            </button>
+
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="h-1.5 w-1.5 rounded-full bg-[#E11D48]" aria-hidden="true" />
+                <p className="font-mono text-[11px] font-semibold tracking-wide text-amber-300 tabular-nums">
+                  EP {episode.number} / {series.episodes.length}
+                </p>
+                <span aria-hidden="true" className="text-zinc-600 text-[11px]">
+                  ·
+                </span>
+                <span className="font-display text-[11px] font-semibold tracking-tight text-white/75">
+                  LayarMini HD
+                </span>
+              </div>
+              <p className="mt-0.5 text-sm font-semibold text-white truncate drop-shadow-sm">
+                {episode.title}
               </p>
-              <span aria-hidden="true" className="text-zinc-600 text-[11px]">
-                ·
-              </span>
-              <span className="font-display text-[11px] font-semibold tracking-tight text-white/75">
-                LayarMini HD
-              </span>
             </div>
-            <p className="mt-0.5 text-sm font-semibold text-white truncate drop-shadow-sm">
-              {episode.title}
-            </p>
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
@@ -227,16 +240,6 @@ export function LayarMiniStreamPlayer({
               className="lg:hidden flex min-h-[40px] min-w-[40px] items-center justify-center rounded-full bg-black/60 text-white backdrop-blur-sm transition-colors hover:bg-black/85 cursor-pointer"
             >
               <ListVideo className="h-4 w-4" aria-hidden="true" />
-            </button>
-
-            <button
-              type="button"
-              tabIndex={showOverlays ? 0 : -1}
-              onClick={onClose}
-              aria-label="Tutup pemutar"
-              className="lg:hidden flex min-h-[40px] min-w-[40px] items-center justify-center rounded-full bg-black/60 text-white backdrop-blur-sm transition-colors hover:bg-black/85 cursor-pointer"
-            >
-              <X className="h-4 w-4" aria-hidden="true" />
             </button>
           </div>
         </div>

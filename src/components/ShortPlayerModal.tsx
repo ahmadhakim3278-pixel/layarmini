@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  ArrowLeft,
   Bookmark,
   Check,
   ChevronLeft,
@@ -302,7 +303,11 @@ export function ShortPlayerModal({
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        onClose();
+        if (isEpisodesDrawerOpen) {
+          setIsEpisodesDrawerOpen(false);
+        } else {
+          onClose();
+        }
       } else if (event.key === ' ' && !episode.doodstreamEmbedUrl) {
         event.preventDefault();
         if (isEnded) {
@@ -316,7 +321,7 @@ export function ShortPlayerModal({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose, isEnded, episode.doodstreamEmbedUrl]);
+  }, [onClose, isEnded, isEpisodesDrawerOpen, episode.doodstreamEmbedUrl]);
 
   const handleNavigateEpisode = (targetNumber: number) => {
     setAutoNextCountdown(null);
@@ -544,23 +549,36 @@ export function ShortPlayerModal({
       >
         <div
           onPointerEnter={revealHud}
-          className={`max-w-[270px] xl:max-w-[380px] rounded-xl border border-white/10 bg-[#0B0B0E]/82 px-4 py-2.5 backdrop-blur-md ${
+          className={`flex flex-col items-start gap-2 xl:flex-row xl:items-center xl:gap-2.5 ${
             effectiveHudVisible ? 'pointer-events-auto' : 'pointer-events-none'
           }`}
         >
-          <p className="text-[11px] text-zinc-400">
-            <span>{series.genre}</span>
-            <span aria-hidden="true" className="mx-1.5 text-zinc-600">
-              ·
-            </span>
-            <span className="font-mono tabular-nums text-amber-300">
-              Ep {episode.number} / {series.episodes.length}
-            </span>
-          </p>
-          <h2 className="font-display mt-0.5 text-sm font-semibold text-white truncate">
-            {series.title}
-          </h2>
-          <p className="text-xs text-zinc-400 truncate">{episode.title}</p>
+          <button
+            type="button"
+            tabIndex={effectiveHudVisible ? 0 : -1}
+            onClick={onClose}
+            aria-label="Kembali ke halaman utama"
+            className="inline-flex min-h-[42px] shrink-0 items-center gap-2 rounded-xl border border-white/12 bg-[#0B0B0E]/82 px-3.5 text-xs font-semibold text-white backdrop-blur-md transition-colors hover:bg-white/15 cursor-pointer focus-visible:outline-2 focus-visible:outline-[#E11D48]"
+          >
+            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+            <span>Kembali</span>
+          </button>
+
+          <div className="max-w-[230px] xl:max-w-[290px] rounded-xl border border-white/10 bg-[#0B0B0E]/82 px-4 py-2 backdrop-blur-md">
+            <p className="text-[11px] text-zinc-400">
+              <span>{series.genre}</span>
+              <span aria-hidden="true" className="mx-1.5 text-zinc-600">
+                ·
+              </span>
+              <span className="font-mono tabular-nums text-amber-300">
+                Ep {episode.number} / {series.episodes.length}
+              </span>
+            </p>
+            <h2 className="font-display mt-0.5 text-sm font-semibold text-white truncate">
+              {series.title}
+            </h2>
+            <p className="text-xs text-zinc-400 truncate">{episode.title}</p>
+          </div>
         </div>
 
         <div
@@ -663,16 +681,28 @@ export function ShortPlayerModal({
                     : 'pointer-events-none opacity-0'
                 }`}
               >
-                <div className="min-w-0">
-                  <p className="font-mono text-[11px] font-semibold tracking-wide text-amber-300">
-                    EP {episode.number} / {series.episodes.length}
-                  </p>
-                  <p className="mt-0.5 text-sm font-semibold text-white truncate">
-                    {episode.title}
-                  </p>
-                  <p className="text-xs text-zinc-300 truncate">
-                    {episode.sceneMood}
-                  </p>
+                <div className="flex min-w-0 items-start gap-2.5">
+                  <button
+                    type="button"
+                    tabIndex={isHudVisible ? 0 : -1}
+                    onClick={onClose}
+                    aria-label="Kembali ke halaman utama"
+                    className="lg:hidden flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm transition-colors hover:bg-black/80 cursor-pointer"
+                  >
+                    <ArrowLeft className="h-5 w-5" aria-hidden="true" />
+                  </button>
+
+                  <div className="min-w-0">
+                    <p className="font-mono text-[11px] font-semibold tracking-wide text-amber-300">
+                      EP {episode.number} / {series.episodes.length}
+                    </p>
+                    <p className="mt-0.5 text-sm font-semibold text-white truncate">
+                      {episode.title}
+                    </p>
+                    <p className="text-xs text-zinc-300 truncate">
+                      {episode.sceneMood}
+                    </p>
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
@@ -691,16 +721,6 @@ export function ShortPlayerModal({
                     ) : (
                       <Volume2 className="h-4 w-4 text-amber-300" aria-hidden="true" />
                     )}
-                  </button>
-
-                  <button
-                    type="button"
-                    tabIndex={isHudVisible ? 0 : -1}
-                    onClick={onClose}
-                    aria-label="Tutup pemutar"
-                    className="lg:hidden flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm transition-colors hover:bg-black/80 cursor-pointer"
-                  >
-                    <X className="h-5 w-5" aria-hidden="true" />
                   </button>
                 </div>
               </div>
@@ -881,6 +901,15 @@ export function ShortPlayerModal({
                     >
                       <RotateCcw className="h-4 w-4" aria-hidden="true" />
                       <span>Putar Ulang Episode</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={onClose}
+                      className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-lg px-5 py-2.5 text-sm font-medium text-zinc-300 transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
+                    >
+                      <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+                      <span>Kembali ke Halaman Utama</span>
                     </button>
                   </div>
                 </div>

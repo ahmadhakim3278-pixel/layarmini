@@ -57,6 +57,16 @@ import {
   unlockEpisodesWithAd,
   upsertWatchHistory,
 } from './utils/dramaLogic';
+import {
+  buildPlayerWatchUrl,
+  createAdHistoryState,
+  createBaseHistoryState,
+  createPlayerHistoryState,
+  isLayarMiniHistoryState,
+  parsePlayerUrlTarget,
+  resolveCloseHistoryAction,
+  resolvePopStateOutcome,
+} from './utils/playerNavigation';
 
 const STORAGE_KEYS = {
   catalog: 'layarmini_catalog_v1',
@@ -96,26 +106,29 @@ export default function App() {
   const [selectedGenre, setSelectedGenre] = useState<DramaGenre>(DramaGenre.All);
   const [searchQuery, setSearchQuery] = useState('');
 
-  useEffect(() => {
-    const handlePopState = () => {
-      setCurrentPath(window.location.pathname);
-    };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
-  }, []);
+  const isAdminRoute =
+    currentPath === '/admin' || currentPath.startsWith('/admin/');
+  const isAdminRouteRef = useRef(isAdminRoute);
+  isAdminRouteRef.current = isAdminRoute;
 
   const navigateTo = useCallback((path: '/' | '/admin') => {
-    if (window.location.pathname !== path) {
-      window.history.pushState({}, '', path);
+    const targetIsAdmin = path === '/admin';
+    if (
+      window.location.pathname !== path ||
+      window.location.search.length > 0
+    ) {
+      window.history.pushState(createBaseHistoryState(targetIsAdmin), '', path);
+    } else {
+      window.history.replaceState(createBaseHistoryState(targetIsAdmin), '', path);
     }
     setCurrentPath(path);
     setPlayerState(null);
     setPendingAdUnlock(null);
+    if (!targetIsAdmin) {
+      setActiveSection(NavSection.Home);
+    }
     window.scrollTo({ top: 0 });
   }, []);
-
-  const isAdminRoute =
-    currentPath === '/admin' || currentPath.startsWith('/admin/');
 
   useEffect(() => {
     document.title = isAdminRoute
@@ -173,12 +186,213 @@ export default function App() {
     episodeNumber: number;
     initialTimeSec: number;
   } | null>(null);
+  const playerStateRef = useRef(playerState);
+  playerStateRef.current = playerState;
 
   // Pending interactive ad unlock state
   const [pendingAdUnlock, setPendingAdUnlock] = useState<{
     series: DramaSeries;
     episodeNumber: number;
   } | null>(null);
+  const pendingAdUnlockRef = useRef(pendingAdUnlock);
+  pendingAdUnlockRef.current = pendingAdUnlock;
+
+  const unlockedKeysRef = useRef(unlockedKeys);
+  unlockedKeysRef.current = unlockedKeys;
+
+  // Ensure initial history entry is marked as base Home/Admin so Back from player always lands here
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const adminRoute =
+      window.location.pathname === '/admin' ||
+      window.location.pathname.startsWith('/admin/');
+    const hasDeepLink =
+      !adminRoute &&
+      (Boolean(parsePlayerUrlTarget(window.location.search)) ||
+        new URLSearchParams(window.location.search).get('autostart') === '1');
+    if (!hasDeepLink && !isLayarMiniHistoryState(window.history.state)) {
+      window.history.replaceState(
+        createBaseHistoryState(adminRoute),
+        '',
+        adminRoute ? '/admin' : '/',
+      );
+    }
+  }, []);
+
+  // Synchronously push/replace history when opening or switching episodes so hardware/browser Back
+  // always returns to Halaman Utama instead of closing the website
+  const openPlayerOverlay = useCallback(
+    (
+      seriesId: string,
+      episodeNumber: number,
+      initialTimeSec: number,
+      options?: { ensureHomeBase?: boolean },
+    ) => {
+      const adminRoute = isAdminRouteRef.current;
+      const targetUrl = buildPlayerWatchUrl(seriesId, episodeNumber, adminRoute);
+      const nextState = createPlayerHistoryState(seriesId, episodeNumber, true);
+
+      if (typeof window !== 'undefined') {
+        const curState = window.history.state;
+        const alreadyInOverlay =
+          isLayarMiniHistoryState(curState) &&
+          (curState.layarminiView === 'player' ||
+            curState.layarminiView === 'ad');
+
+        if (options?.ensureHomeBase && !adminRoute) {
+          // Put Halaman Utama ("/") underneath deep-linked watch URLs so Back returns Home
+          window.history.replaceState(createBaseHistoryState(false), '', '/');
+          window.history.pushState(nextState, '', targetUrl);
+        } else if (alreadyInOverlay) {
+          // Switching episodes replaces current overlay entry so 1 Back click returns Home
+          window.history.replaceState(nextState, '', targetUrl);
+        } else {
+          if (!isLayarMiniHistoryState(curState)) {
+            window.history.replaceState(
+              createBaseHistoryState(adminRoute),
+              '',
+              adminRoute ? '/admin' : '/',
+            );
+          }
+          window.history.pushState(nextState, '', targetUrl);
+        }
+      }
+
+      setPendingAdUnlock(null);
+      setPlayerState({
+        seriesId,
+        episodeNumber,
+        initialTimeSec,
+      });
+    },
+    [],
+  );
+
+  const openAdUnlockOverlay = useCallback(
+    (
+      series: DramaSeries,
+      episodeNumber: number,
+      options?: { ensureHomeBase?: boolean },
+    ) => {
+      const adminRoute = isAdminRouteRef.current;
+      if (typeof window !== 'undefined' && !playerStateRef.current) {
+        const curState = window.history.state;
+        const alreadyInOverlay =
+          isLayarMiniHistoryState(curState) &&
+          (curState.layarminiView === 'player' ||
+            curState.layarminiView === 'ad');
+        const adState = createAdHistoryState(series.id, episodeNumber, true);
+        const targetUrl = buildPlayerWatchUrl(series.id, episodeNumber, adminRoute);
+
+        if (options?.ensureHomeBase && !adminRoute) {
+          window.history.replaceState(createBaseHistoryState(false), '', '/');
+          window.history.pushState(adState, '', targetUrl);
+        } else if (alreadyInOverlay) {
+          window.history.replaceState(adState, '', targetUrl);
+        } else {
+          if (!isLayarMiniHistoryState(curState)) {
+            window.history.replaceState(
+              createBaseHistoryState(adminRoute),
+              '',
+              adminRoute ? '/admin' : '/',
+            );
+          }
+          window.history.pushState(adState, '', targetUrl);
+        }
+      }
+      setPendingAdUnlock({ series, episodeNumber });
+    },
+    [],
+  );
+
+  const closePlayerToHome = useCallback(() => {
+    const adminRoute = isAdminRouteRef.current;
+    setPlayerState(null);
+    setPendingAdUnlock(null);
+    if (!adminRoute) {
+      setActiveSection(NavSection.Home);
+      window.scrollTo({ top: 0 });
+    }
+
+    if (typeof window !== 'undefined') {
+      const action = resolveCloseHistoryAction(
+        window.history.state,
+        window.history.length,
+      );
+      if (action === 'history-back') {
+        window.history.back();
+      } else {
+        window.history.replaceState(
+          createBaseHistoryState(adminRoute),
+          '',
+          adminRoute ? '/admin' : '/',
+        );
+      }
+    }
+  }, []);
+
+  const handleCancelAdUnlock = useCallback(() => {
+    if (playerStateRef.current) {
+      setPendingAdUnlock(null);
+      return;
+    }
+    closePlayerToHome();
+  }, [closePlayerToHome]);
+
+  // Handle browser/device Back & Forward buttons
+  useEffect(() => {
+    const handlePopState = (event: PopStateEvent) => {
+      const resolution = resolvePopStateOutcome(
+        window.location.pathname,
+        event.state,
+      );
+      setCurrentPath(resolution.nextPath);
+
+      if (resolution.restorePlayerTarget) {
+        const target = resolution.restorePlayerTarget;
+        const matched = seriesCatalogRef.current.find(
+          (s) => s.id === target.seriesId,
+        );
+        if (matched && matched.episodes.length > 0) {
+          const safeEp = Math.max(
+            1,
+            Math.min(target.episodeNumber, matched.episodes.length),
+          );
+          if (
+            isEpisodeUnlocked(
+              matched.id,
+              safeEp,
+              matched.freeUntilEpisode,
+              unlockedKeysRef.current,
+            )
+          ) {
+            setPendingAdUnlock(null);
+            setPlayerState({
+              seriesId: matched.id,
+              episodeNumber: safeEp,
+              initialTimeSec: 0,
+            });
+            return;
+          }
+        }
+      }
+
+      if (resolution.shouldCloseAd && pendingAdUnlockRef.current) {
+        setPendingAdUnlock(null);
+      }
+      if (resolution.shouldClosePlayer && playerStateRef.current) {
+        setPlayerState(null);
+      }
+      if (resolution.shouldResetToHomeSection) {
+        setActiveSection(NavSection.Home);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   // Toast message
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -327,17 +541,20 @@ export default function App() {
       return;
     }
     const params = new URLSearchParams(window.location.search);
-    const sharedSeriesId = params.get('series');
-    if (sharedSeriesId) {
-      if (!onlineCatalogReady && !seriesCatalog.some((s) => s.id === sharedSeriesId)) {
+    const sharedTarget = parsePlayerUrlTarget(window.location.search);
+    if (sharedTarget) {
+      if (
+        !onlineCatalogReady &&
+        !seriesCatalog.some((s) => s.id === sharedTarget.seriesId)
+      ) {
         return;
       }
-      const matched = seriesCatalog.find((s) => s.id === sharedSeriesId);
+      const matched = seriesCatalog.find((s) => s.id === sharedTarget.seriesId);
       if (matched && matched.episodes.length > 0) {
-        const requestedEp = Number(params.get('ep') ?? '1');
-        const safeEp = Number.isFinite(requestedEp)
-          ? Math.max(1, Math.min(Math.floor(requestedEp), matched.episodes.length))
-          : 1;
+        const safeEp = Math.max(
+          1,
+          Math.min(sharedTarget.episodeNumber, matched.episodes.length),
+        );
         deepLinkAppliedRef.current = true;
         if (
           isEpisodeUnlocked(
@@ -347,13 +564,9 @@ export default function App() {
             unlockedKeys,
           )
         ) {
-          setPlayerState({
-            seriesId: matched.id,
-            episodeNumber: safeEp,
-            initialTimeSec: 0,
-          });
+          openPlayerOverlay(matched.id, safeEp, 0, { ensureHomeBase: true });
         } else {
-          setPendingAdUnlock({ series: matched, episodeNumber: safeEp });
+          openAdUnlockOverlay(matched, safeEp, { ensureHomeBase: true });
         }
       }
       return;
@@ -362,14 +575,17 @@ export default function App() {
       const lead = seriesCatalog[0];
       if (lead && lead.episodes.length > 0) {
         deepLinkAppliedRef.current = true;
-        setPlayerState({
-          seriesId: lead.id,
-          episodeNumber: 1,
-          initialTimeSec: 0,
-        });
+        openPlayerOverlay(lead.id, 1, 0, { ensureHomeBase: true });
       }
     }
-  }, [isAdminRoute, onlineCatalogReady, seriesCatalog, unlockedKeys]);
+  }, [
+    isAdminRoute,
+    onlineCatalogReady,
+    seriesCatalog,
+    unlockedKeys,
+    openPlayerOverlay,
+    openAdUnlockOverlay,
+  ]);
 
   const featuredSeries = seriesCatalog[0] ?? null;
 
@@ -430,16 +646,18 @@ export default function App() {
           unlockedKeys,
         )
       ) {
-        setPlayerState({
-          seriesId: series.id,
-          episodeNumber: targetEp,
-          initialTimeSec: resumeSec,
-        });
+        openPlayerOverlay(series.id, targetEp, resumeSec);
       } else {
-        setPendingAdUnlock({ series, episodeNumber: targetEp });
+        openAdUnlockOverlay(series, targetEp);
       }
     },
-    [watchHistory, unlockedKeys, showToast],
+    [
+      watchHistory,
+      unlockedKeys,
+      showToast,
+      openPlayerOverlay,
+      openAdUnlockOverlay,
+    ],
   );
 
   const handlePrimaryWatch = useCallback(() => {
@@ -512,19 +730,14 @@ export default function App() {
         unlockEpisodesWithAd(prev, series, episodeNumber, bonusCount),
       );
       setAdsCompletedCount((c) => c + 1);
-      setPendingAdUnlock(null);
-      setPlayerState({
-        seriesId: series.id,
-        episodeNumber,
-        initialTimeSec: 0,
-      });
+      openPlayerOverlay(series.id, episodeNumber, 0);
       showToast(
         bonusCount > 1
           ? `Berhasil membuka ${bonusCount} episode gratis!`
           : `Episode ${episodeNumber} terbuka gratis!`,
       );
     },
-    [pendingAdUnlock, showToast],
+    [pendingAdUnlock, showToast, openPlayerOverlay],
   );
 
   const handleShareSeries = useCallback(
@@ -878,13 +1091,9 @@ export default function App() {
 
   const handleAdminPreviewEpisode = useCallback(
     (series: DramaSeries, episodeNumber: number) => {
-      setPlayerState({
-        seriesId: series.id,
-        episodeNumber,
-        initialTimeSec: 0,
-      });
+      openPlayerOverlay(series.id, episodeNumber, 0);
     },
-    [],
+    [openPlayerOverlay],
   );
 
   const renderFilterAndGrid = () => (
@@ -981,19 +1190,12 @@ export default function App() {
       unlockedKeys={unlockedKeys}
       isSaved={savedSeriesIds.includes(activePlayerSeries.id)}
       isLiked={likedSeriesIds.includes(activePlayerSeries.id)}
-      onClose={() => setPlayerState(null)}
+      onClose={closePlayerToHome}
       onSelectEpisode={(epNum) =>
-        setPlayerState({
-          seriesId: activePlayerSeries.id,
-          episodeNumber: epNum,
-          initialTimeSec: 0,
-        })
+        openPlayerOverlay(activePlayerSeries.id, epNum, 0)
       }
       onRequestUnlockEpisode={(epNum) =>
-        setPendingAdUnlock({
-          series: activePlayerSeries,
-          episodeNumber: epNum,
-        })
+        openAdUnlockOverlay(activePlayerSeries, epNum)
       }
       onProgressUpdate={(epNum, prog, dur) =>
         handleProgressUpdate(activePlayerSeries.id, epNum, prog, dur)
@@ -1404,7 +1606,7 @@ export default function App() {
           targetEpisodeNumber={pendingAdUnlock.episodeNumber}
           totalEpisodes={pendingAdUnlock.series.episodes.length}
           onComplete={handleAdUnlockComplete}
-          onCancel={() => setPendingAdUnlock(null)}
+          onCancel={handleCancelAdUnlock}
         />
       )}
 

@@ -155,12 +155,14 @@ test('GET /api/doodstream/files handles unconfigured state and scoped folder lis
   };
 
   const listRes = await handleDoodstreamApiRequest(
-    new Request('https://layarmini.workers.dev/api/doodstream/files?fld_id=77'),
+    new Request('https://layarmini.workers.dev/api/doodstream/files?fld_id=77&page=2'),
     { DOODSTREAM_API_KEY: 'live-key' },
     mockFetch,
   );
   assert.equal(listRes.status, 200);
   assert.ok(requestedUrl.includes('fld_id=77'));
+  assert.ok(requestedUrl.includes('per_page=100'));
+  assert.ok(requestedUrl.includes('page=2'));
   const body = (await listRes.json()) as {
     configured: boolean;
     files: Array<{ filecode: string; embedUrl: string; durationSec: number }>;

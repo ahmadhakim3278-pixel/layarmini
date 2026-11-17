@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ArrowDown,
   ArrowLeft,
@@ -41,16 +41,16 @@ import {
   normalizeStreamVideoUrl,
   sanitizeDoodstreamFolderName,
 } from '../utils/doodstream';
+import {
+  buildEpisodePayloadFromLibraryFile,
+  type DoodstreamLibraryFile,
+} from '../utils/doodstreamLibrary';
 import { formatDuration } from '../utils/dramaLogic';
+import {
+  DoodstreamLibraryPicker,
+  type DoodstreamLibraryScope,
+} from './DoodstreamLibraryPicker';
 import { PosterImage } from './PosterImage';
-
-interface DoodstreamLibraryFile {
-  filecode: string;
-  title: string;
-  durationSec: number;
-  uploaded: string;
-  embedUrl: string;
-}
 
 interface AdminPanelProps {
   seriesList: DramaSeries[];
@@ -207,6 +207,10 @@ export function AdminPanel({
   // Doodstream server & modal upload state
   const [doodConfigured, setDoodConfigured] = useState<boolean | null>(null);
   const [doodLibrary, setDoodLibrary] = useState<DoodstreamLibraryFile[]>([]);
+  const [doodLibraryScope, setDoodLibraryScope] =
+    useState<DoodstreamLibraryScope>('all');
+  const [isLoadingDoodLibrary, setIsLoadingDoodLibrary] = useState(false);
+  const [doodLibraryError, setDoodLibraryError] = useState<string | null>(null);
   const [selectedVideoFile, setSelectedVideoFile] = useState<File | null>(null);
   const [remoteVideoUrl, setRemoteVideoUrl] = useState('');
   const [isUploadingVideo, setIsUploadingVideo] = useState(false);
@@ -222,7 +226,7 @@ export function AdminPanel({
   const [inlineRemoteUrl, setInlineRemoteUrl] = useState('');
   const [inlineEmbedInput, setInlineEmbedInput] = useState('');
   const [inlineUploadMode, setInlineUploadMode] = useState<
-    'file' | 'remote' | 'embed'
+    'file' | 'remote' | 'embed' | 'library'
   >('file');
   const [isInlineUploading, setIsInlineUploading] = useState(false);
   const [inlineFeedback, setInlineFeedback] = useState<{
@@ -235,7 +239,7 @@ export function AdminPanel({
     null,
   );
   const [perEpisodeMode, setPerEpisodeMode] = useState<
-    'file' | 'remote' | 'embed'
+    'file' | 'remote' | 'embed' | 'library'
   >('file');
   const [perEpisodeFile, setPerEpisodeFile] = useState<File | null>(null);
   const [perEpisodeFileInputKey, setPerEpisodeFileInputKey] = useState(0);
@@ -305,29 +309,90 @@ export function AdminPanel({
     [seriesList, selectedSeriesId],
   );
 
-  // Load Doodstream library files scoped to the selected title's folder when configured
+  const fetchDoodLibrary = useCallback(
+    async (
+      requestedScope: DoodstreamLibraryScope,
+      options: { fallbackToAllIfEmpty?: boolean } = {},
+    ) => {
+      if (!doodConfigured) {
+        return;
+      }
+      setIsLoadingDoodLibrary(true);
+      setDoodLibraryError(null);
+      try {
+        const useFolder =
+          requestedScope === 'folder' && Boolean(activeSeries?.doodstreamFolderId);
+        const fldQuery = useFolder
+          ? `?fld_id=${encodeURIComponent(activeSeries!.doodstreamFolderId!)}`
+          : '';
+        const res = await fetch(`/api/doodstream/files${fldQuery}`);
+        const listData = (await res.json()) as {
+          configured?: boolean;
+          error?: string;
+          files?: DoodstreamLibraryFile[];
+        };
+        if (!res.ok || listData.error) {
+          setDoodLibraryError(
+            listData.error || 'Gagal memuat daftar video dari akun Doodstream.',
+          );
+          setDoodLibrary([]);
+          return;
+        }
+        const fetchedFiles = Array.isArray(listData.files) ? listData.files : [];
+
+        // If scoped folder is empty on first load, automatically show all account videos so user sees uploads outside folder
+        if (
+          useFolder &&
+          fetchedFiles.length === 0 &&
+          options.fallbackToAllIfEmpty
+        ) {
+          const allRes = await fetch('/api/doodstream/files');
+          const allData = (await allRes.json()) as {
+            error?: string;
+            files?: DoodstreamLibraryFile[];
+          };
+          if (allRes.ok && Array.isArray(allData.files) && allData.files.length > 0) {
+            setDoodLibraryScope('all');
+            setDoodLibrary(allData.files);
+            return;
+          }
+        }
+
+        setDoodLibrary(fetchedFiles);
+      } catch {
+        setDoodLibraryError(
+          'Koneksi ke server Doodstream terputus saat memuat daftar video.',
+        );
+      } finally {
+        setIsLoadingDoodLibrary(false);
+      }
+    },
+    [doodConfigured, activeSeries?.doodstreamFolderId],
+  );
+
+  // Load Doodstream library files whenever active series or folder link changes
   useEffect(() => {
     if (!doodConfigured) {
       return;
     }
-    let active = true;
-    const fldQuery = activeSeries?.doodstreamFolderId
-      ? `?fld_id=${encodeURIComponent(activeSeries.doodstreamFolderId)}`
-      : '';
-    fetch(`/api/doodstream/files${fldQuery}`)
-      .then((r) => r.json())
-      .then((listData: { files?: DoodstreamLibraryFile[] }) => {
-        if (active && Array.isArray(listData.files)) {
-          setDoodLibrary(listData.files);
-        }
-      })
-      .catch(() => {
-        // Ignore transient library fetch errors
-      });
-    return () => {
-      active = false;
-    };
-  }, [doodConfigured, activeSeries?.id, activeSeries?.doodstreamFolderId]);
+    const defaultScope: DoodstreamLibraryScope = activeSeries?.doodstreamFolderId
+      ? 'folder'
+      : 'all';
+    setDoodLibraryScope(defaultScope);
+    void fetchDoodLibrary(defaultScope, { fallbackToAllIfEmpty: true });
+  }, [doodConfigured, activeSeries?.id, activeSeries?.doodstreamFolderId, fetchDoodLibrary]);
+
+  const handleChangeLibraryScope = useCallback(
+    (nextScope: DoodstreamLibraryScope) => {
+      setDoodLibraryScope(nextScope);
+      void fetchDoodLibrary(nextScope);
+    },
+    [fetchDoodLibrary],
+  );
+
+  const handleRefreshLibrary = useCallback(() => {
+    void fetchDoodLibrary(doodLibraryScope);
+  }, [fetchDoodLibrary, doodLibraryScope]);
 
   useEffect(() => {
     setInlineFeedback(null);
@@ -504,6 +569,7 @@ export function AdminPanel({
           : `Video terunggah ke folder "${data.folderName || modalSeries?.title || 'Doodstream'}" (${data.filecode}).`,
       });
       setSelectedVideoFile(null);
+      void fetchDoodLibrary(doodLibraryScope);
     } catch {
       setUploadFeedback({
         type: 'error',
@@ -588,6 +654,7 @@ export function AdminPanel({
           : `Remote upload dikirim ke folder "${data.folderName || modalSeries?.title || 'Doodstream'}" (${data.filecode}).`,
       });
       setRemoteVideoUrl('');
+      void fetchDoodLibrary(doodLibraryScope);
     } catch {
       setUploadFeedback({
         type: 'error',
@@ -673,6 +740,7 @@ export function AdminPanel({
       setInlineEpisodeTitle('');
       setInlineVideoFile(null);
       setInlineFileInputKey((prev) => prev + 1);
+      void fetchDoodLibrary(doodLibraryScope);
     } catch {
       setInlineFeedback({
         type: 'error',
@@ -745,6 +813,7 @@ export function AdminPanel({
       });
       setInlineEpisodeTitle('');
       setInlineRemoteUrl('');
+      void fetchDoodLibrary(doodLibraryScope);
     } catch {
       setInlineFeedback({
         type: 'error',
@@ -784,6 +853,27 @@ export function AdminPanel({
     });
     setInlineEpisodeTitle('');
     setInlineEmbedInput('');
+  };
+
+  const handleInlinePickFromLibrary = (file: DoodstreamLibraryFile) => {
+    if (!activeSeries) {
+      return;
+    }
+    const nextEpNumber = activeSeries.episodes.length + 1;
+    const payload = buildEpisodePayloadFromLibraryFile(
+      file,
+      inlineEpisodeTitle,
+      nextEpNumber,
+      activeSeries.doodstreamFolderId,
+      activeSeries.doodstreamFolderName || activeSeries.title,
+    );
+
+    onQuickAddUploadedEpisode(activeSeries.id, payload);
+    setInlineFeedback({
+      type: 'success',
+      message: `Video "${payload.title}" (${file.filecode}) dari daftar Doodstream ditambahkan sebagai Episode ${nextEpNumber}.`,
+    });
+    setInlineEpisodeTitle('');
   };
 
   // Per-episode upload handlers directly inside each episode row
@@ -875,6 +965,7 @@ export function AdminPanel({
       setPerEpisodeFile(null);
       setPerEpisodeFileInputKey((prev) => prev + 1);
       setPerEpisodeUploadNum(null);
+      void fetchDoodLibrary(doodLibraryScope);
     } catch {
       setPerEpisodeFeedback({
         episodeNumber: ep.number,
@@ -948,6 +1039,7 @@ export function AdminPanel({
       });
       setPerEpisodeRemoteUrl('');
       setPerEpisodeUploadNum(null);
+      void fetchDoodLibrary(doodLibraryScope);
     } catch {
       setPerEpisodeFeedback({
         episodeNumber: ep.number,
@@ -987,6 +1079,30 @@ export function AdminPanel({
       message: `Link Doodstream terpasang pada Episode ${ep.number}${code ? ` (${code})` : ''}.`,
     });
     setPerEpisodeEmbedInput('');
+    setPerEpisodeUploadNum(null);
+  };
+
+  const handlePerEpisodePickFromLibrary = (
+    ep: Episode,
+    file: DoodstreamLibraryFile,
+  ) => {
+    if (!activeSeries) {
+      return;
+    }
+    const payload = buildEpisodePayloadFromLibraryFile(
+      file,
+      ep.title,
+      ep.number,
+      activeSeries.doodstreamFolderId,
+      activeSeries.doodstreamFolderName || activeSeries.title,
+    );
+
+    onAttachVideoToEpisode(activeSeries.id, ep.number, payload);
+    setPerEpisodeFeedback({
+      episodeNumber: ep.number,
+      type: 'success',
+      message: `Video "${file.title}" (${file.filecode}) dari daftar Doodstream terpasang pada Episode ${ep.number}.`,
+    });
     setPerEpisodeUploadNum(null);
   };
 
@@ -1543,11 +1659,18 @@ export function AdminPanel({
                 <div
                   role="tablist"
                   aria-label="Metode tambah video dan episode"
-                  className="flex items-center gap-1.5 shrink-0"
+                  className="flex flex-wrap items-center gap-1.5 shrink-0"
                 >
                   {(
                     [
                       { id: 'file', label: 'Upload File' },
+                      {
+                        id: 'library',
+                        label:
+                          doodLibrary.length > 0
+                            ? `Daftar Doodstream (${doodLibrary.length})`
+                            : 'Daftar Doodstream',
+                      },
                       { id: 'remote', label: 'Remote URL' },
                       { id: 'embed', label: 'Link Embed' },
                     ] as const
@@ -1560,6 +1683,11 @@ export function AdminPanel({
                       onClick={() => {
                         setInlineUploadMode(tab.id);
                         setInlineFeedback(null);
+                        if (tab.id === 'library' && doodConfigured && doodLibrary.length === 0) {
+                          void fetchDoodLibrary(doodLibraryScope, {
+                            fallbackToAllIfEmpty: true,
+                          });
+                        }
                       }}
                       className={`min-h-[34px] rounded-md px-2.5 py-1 text-[11px] font-medium whitespace-nowrap cursor-pointer transition-colors ${
                         inlineUploadMode === tab.id
@@ -1574,19 +1702,23 @@ export function AdminPanel({
               </div>
 
               <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-12 sm:items-end">
-                <div className="sm:col-span-4">
+                <div
+                  className={
+                    inlineUploadMode === 'library' ? 'sm:col-span-12' : 'sm:col-span-4'
+                  }
+                >
                   <label
                     htmlFor="inline-ep-title"
                     className="block text-[11px] font-medium text-zinc-300"
                   >
-                    Judul Episode Baru (opsional)
+                    Judul Episode {activeSeries.episodes.length + 1} (opsional)
                   </label>
                   <input
                     id="inline-ep-title"
                     type="text"
                     value={inlineEpisodeTitle}
                     onChange={(e) => setInlineEpisodeTitle(e.target.value)}
-                    placeholder={`Otomatis: Episode ${activeSeries.episodes.length + 1}`}
+                    placeholder={`Otomatis dari nama video atau Episode ${activeSeries.episodes.length + 1}`}
                     className="mt-1 h-10 w-full rounded-lg border border-white/12 bg-[#0F0F13] px-3 text-xs text-white placeholder:text-zinc-500 focus:border-[#E11D48] focus:outline-none"
                   />
                 </div>
@@ -1626,6 +1758,34 @@ export function AdminPanel({
                         {isInlineUploading ? 'Mengunggah...' : 'Upload & Buat Episode'}
                       </span>
                     </button>
+                  </div>
+                )}
+
+                {inlineUploadMode === 'library' && (
+                  <div className="sm:col-span-12 pt-1">
+                    <DoodstreamLibraryPicker
+                      idPrefix="inline-next-ep"
+                      mode="append"
+                      targetEpisodeNumber={activeSeries.episodes.length + 1}
+                      doodConfigured={doodConfigured}
+                      files={doodLibrary}
+                      episodes={activeSeries.episodes}
+                      isLoading={isLoadingDoodLibrary}
+                      error={doodLibraryError}
+                      scope={doodLibraryScope}
+                      hasSeriesFolder={Boolean(activeSeries.doodstreamFolderId)}
+                      seriesFolderName={
+                        activeSeries.doodstreamFolderName ||
+                        sanitizeDoodstreamFolderName(activeSeries.title)
+                      }
+                      onChangeScope={handleChangeLibraryScope}
+                      onRefresh={handleRefreshLibrary}
+                      onSelectFile={handleInlinePickFromLibrary}
+                      onSwitchToEmbed={() => {
+                        setInlineUploadMode('embed');
+                        setInlineFeedback(null);
+                      }}
+                    />
                   </div>
                 )}
 
@@ -1937,11 +2097,18 @@ export function AdminPanel({
                             <div
                               role="tablist"
                               aria-label={`Metode upload video episode ${ep.number}`}
-                              className="flex items-center gap-1.5 shrink-0"
+                              className="flex flex-wrap items-center gap-1.5 shrink-0"
                             >
                               {(
                                 [
                                   { id: 'file', label: 'Upload File' },
+                                  {
+                                    id: 'library',
+                                    label:
+                                      doodLibrary.length > 0
+                                        ? `Daftar Doodstream (${doodLibrary.length})`
+                                        : 'Daftar Doodstream',
+                                  },
                                   { id: 'remote', label: 'Remote URL' },
                                   { id: 'embed', label: 'Link Embed' },
                                 ] as const
@@ -1954,6 +2121,15 @@ export function AdminPanel({
                                   onClick={() => {
                                     setPerEpisodeMode(tab.id);
                                     setPerEpisodeFeedback(null);
+                                    if (
+                                      tab.id === 'library' &&
+                                      doodConfigured &&
+                                      doodLibrary.length === 0
+                                    ) {
+                                      void fetchDoodLibrary(doodLibraryScope, {
+                                        fallbackToAllIfEmpty: true,
+                                      });
+                                    }
                                   }}
                                   className={`min-h-[32px] rounded-md px-2.5 py-1 text-[11px] font-medium whitespace-nowrap cursor-pointer transition-colors ${
                                     perEpisodeMode === tab.id
@@ -1966,6 +2142,35 @@ export function AdminPanel({
                               ))}
                             </div>
                           </div>
+
+                          {perEpisodeMode === 'library' && (
+                            <DoodstreamLibraryPicker
+                              idPrefix={`per-ep-${ep.number}`}
+                              mode="attach"
+                              targetEpisodeNumber={ep.number}
+                              doodConfigured={doodConfigured}
+                              files={doodLibrary}
+                              episodes={activeSeries.episodes}
+                              isLoading={isLoadingDoodLibrary}
+                              error={doodLibraryError}
+                              scope={doodLibraryScope}
+                              hasSeriesFolder={Boolean(activeSeries.doodstreamFolderId)}
+                              seriesFolderName={
+                                activeSeries.doodstreamFolderName ||
+                                sanitizeDoodstreamFolderName(activeSeries.title)
+                              }
+                              selectedFileCode={ep.doodstreamFileCode}
+                              onChangeScope={handleChangeLibraryScope}
+                              onRefresh={handleRefreshLibrary}
+                              onSelectFile={(file) =>
+                                handlePerEpisodePickFromLibrary(ep, file)
+                              }
+                              onSwitchToEmbed={() => {
+                                setPerEpisodeMode('embed');
+                                setPerEpisodeFeedback(null);
+                              }}
+                            />
+                          )}
 
                           {perEpisodeMode === 'file' && (
                             <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
@@ -2802,48 +3007,81 @@ export function AdminPanel({
                   )}
                 </div>
 
-                {doodLibrary.length > 0 && (
-                  <div className="space-y-1.5">
-                    <label
-                      htmlFor="ep-dood-library"
-                      className="block text-[11px] text-zinc-400"
-                    >
-                      Pilih dari Daftar Video Doodstream Anda
-                    </label>
-                    <select
-                      id="ep-dood-library"
-                      value=""
-                      onChange={(e) => {
-                        const picked = doodLibrary.find(
-                          (f) => f.filecode === e.target.value,
-                        );
-                        if (!picked) return;
-                        setEpisodeModal({
-                          ...episodeModal,
-                          form: {
-                            ...episodeModal.form,
-                            doodstreamFileCode: picked.filecode,
-                            doodstreamEmbedUrl: picked.embedUrl,
-                            durationSec:
-                              picked.durationSec >= 5
-                                ? Math.min(600, picked.durationSec)
-                                : episodeModal.form.durationSec,
-                          },
-                        });
-                      }}
-                      className="h-10 w-full rounded-lg border border-white/12 bg-[#0F0F13] px-3 text-xs text-white focus:border-[#E11D48] focus:outline-none"
-                    >
-                      <option value="">
-                        -- Pilih video tersimpan di akun Doodstream --
-                      </option>
-                      {doodLibrary.map((file) => (
-                        <option key={file.filecode} value={file.filecode}>
-                          {file.title} ({file.filecode})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
+                <div className="border-t border-white/8 pt-3">
+                  <DoodstreamLibraryPicker
+                    idPrefix="modal-ep"
+                    mode="modal"
+                    targetEpisodeNumber={
+                      episodeModal.editingNumber ??
+                      ((seriesList.find((s) => s.id === episodeModal.seriesId)
+                        ?.episodes.length ?? 0) +
+                        1)
+                    }
+                    doodConfigured={doodConfigured}
+                    files={doodLibrary}
+                    episodes={
+                      seriesList.find((s) => s.id === episodeModal.seriesId)
+                        ?.episodes ?? []
+                    }
+                    isLoading={isLoadingDoodLibrary}
+                    error={doodLibraryError}
+                    scope={doodLibraryScope}
+                    hasSeriesFolder={Boolean(
+                      seriesList.find((s) => s.id === episodeModal.seriesId)
+                        ?.doodstreamFolderId,
+                    )}
+                    seriesFolderName={
+                      seriesList.find((s) => s.id === episodeModal.seriesId)
+                        ?.doodstreamFolderName ||
+                      sanitizeDoodstreamFolderName(
+                        seriesList.find((s) => s.id === episodeModal.seriesId)
+                          ?.title || '',
+                      )
+                    }
+                    selectedFileCode={episodeModal.form.doodstreamFileCode}
+                    onChangeScope={handleChangeLibraryScope}
+                    onRefresh={handleRefreshLibrary}
+                    onSelectFile={(picked) => {
+                      const modalSeries = seriesList.find(
+                        (s) => s.id === episodeModal.seriesId,
+                      );
+                      const fallbackNum =
+                        episodeModal.editingNumber ??
+                        (modalSeries?.episodes.length ?? 0) + 1;
+                      setEpisodeModal((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              form: {
+                                ...prev.form,
+                                title: prev.form.title.trim()
+                                  ? prev.form.title
+                                  : buildAutoEpisodeTitle(
+                                      picked.title,
+                                      fallbackNum,
+                                    ),
+                                doodstreamFileCode: picked.filecode,
+                                doodstreamEmbedUrl: picked.embedUrl,
+                                durationSec:
+                                  picked.durationSec >= 5
+                                    ? Math.min(600, Math.round(picked.durationSec))
+                                    : prev.form.durationSec,
+                              },
+                              errors: {
+                                ...prev.errors,
+                                title: undefined,
+                                doodstreamEmbedUrl: undefined,
+                              },
+                            }
+                          : null,
+                      );
+                      setUploadFeedback({
+                        type: 'success',
+                        message: `Video "${picked.title}" (${picked.filecode}) dipilih dari daftar Doodstream Anda.`,
+                      });
+                    }}
+                  />
+                </div>
 
                 {uploadFeedback && (
                   <div
