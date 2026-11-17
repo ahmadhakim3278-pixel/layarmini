@@ -1,0 +1,8 @@
+{
+  "name": "Remix LayarMini",
+  "description": "Platform streaming short movie dan drama pendek vertikal gratis dengan episode lengkap serta dukungan iklan interaktif tanpa langganan.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
