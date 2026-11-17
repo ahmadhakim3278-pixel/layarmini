@@ -31,6 +31,14 @@ test('resolveDoodstreamKey rejects missing, blank, and placeholder keys', () => 
     resolveDoodstreamKey({ DOODSTREAM_API_KEY: '  secret-key-123  ' }),
     'secret-key-123',
   );
+  assert.equal(
+    resolveDoodstreamKey({ DOODSTREAM_API_KEY: '"secret-key-123"' }),
+    'secret-key-123',
+  );
+  assert.equal(
+    resolveDoodstreamKey({ DOODSTREAM_API_KEY: '"MY_DOODSTREAM_API_KEY"' }),
+    null,
+  );
 });
 
 test('GET /api/doodstream/status reflects secret configuration state', async () => {

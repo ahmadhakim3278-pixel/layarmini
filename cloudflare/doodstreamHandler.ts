@@ -42,7 +42,11 @@ function jsonResponse(payload: unknown, status = 200): Response {
 }
 
 export function resolveDoodstreamKey(env: DoodstreamEnv): string | null {
-  const key = env.DOODSTREAM_API_KEY?.trim();
+  const raw = env.DOODSTREAM_API_KEY?.trim();
+  if (!raw) {
+    return null;
+  }
+  const key = raw.replace(/^(['"])(.*)\1$/, '$2').trim();
   if (!key || key === 'MY_DOODSTREAM_API_KEY') {
     return null;
   }

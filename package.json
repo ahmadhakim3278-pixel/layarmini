@@ -11,7 +11,7 @@
     "clean": "rm -rf dist server.js .wrangler",
     "lint": "tsc --noEmit",
     "cf:dev": "vite build && wrangler pages dev dist",
-    "cf:deploy": "vite build && wrangler pages deploy dist",
+    "cf:deploy": "vite build && wrangler pages deploy dist --project-name=layarmini",
     "cf:dry-run": "vite build && wrangler pages functions build --outdir .wrangler/pages-bundle"
   },
   "dependencies": {
