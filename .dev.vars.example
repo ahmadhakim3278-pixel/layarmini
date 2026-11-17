@@ -1,0 +1,7 @@
+# Salin berkas ini menjadi `.dev.vars` untuk pengujian lokal dengan `npm run cf:dev`
+# Jangan pernah meng-commit `.dev.vars` ke Git (sudah masuk .gitignore).
+# Untuk produksi di Cloudflare Pages, simpan kunci melalui:
+#   Cloudflare Dashboard -> Workers & Pages -> layarmini -> Settings -> Variables and Secrets
+# atau via CLI:
+#   npx wrangler pages secret put DOODSTREAM_API_KEY --project-name=layarmini
+DOODSTREAM_API_KEY="MY_DOODSTREAM_API_KEY"

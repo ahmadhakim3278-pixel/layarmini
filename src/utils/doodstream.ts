@@ -15,6 +15,7 @@ const DOODSTREAM_HOSTS = new Set([
   'dood.to',
   'dood.so',
   'dood.la',
+  'dood.li',
   'dood.ws',
   'dood.sh',
   'dood.re',
@@ -24,10 +25,20 @@ const DOODSTREAM_HOSTS = new Set([
   'dood.cx',
   'doodstream.com',
   'ds2play.com',
+  'dsvplay.com',
+  'playmogo.com',
+  'myvidplay.com',
+  'vidply.com',
+  'doply.net',
+  'd-s.io',
   'do0od.com',
   'd0o0d.com',
+  'd000d.com',
+  'd0000d.com',
   'dooood.com',
 ]);
+
+const DEAD_DOODSTREAM_MIRRORS = new Set(['dsvplay.com']);
 
 export function sanitizeDoodstreamFolderName(title: string): string {
   const cleaned = title
@@ -57,8 +68,8 @@ export function extractDoodstreamFileCode(input: string): string | null {
     return null;
   }
 
-  // Raw filecode (alphanumeric, 6-24 chars)
-  if (/^[a-zA-Z0-9_-]{6,24}$/.test(trimmed)) {
+  // Raw filecode or protected embed hash (alphanumeric, 6-64 chars)
+  if (/^[a-zA-Z0-9_-]{6,64}$/.test(trimmed)) {
     return trimmed;
   }
 
@@ -68,13 +79,18 @@ export function extractDoodstreamFileCode(input: string): string | null {
     const isKnownDoodHost =
       DOODSTREAM_HOSTS.has(hostname) ||
       hostname.includes('dood') ||
-      hostname.includes('ds2play');
+      hostname.includes('ds2play') ||
+      hostname.includes('dsvplay') ||
+      hostname.includes('playmogo') ||
+      hostname.includes('myvidplay') ||
+      hostname.includes('vidply') ||
+      hostname.includes('doply');
 
     if (!isKnownDoodHost) {
       return null;
     }
 
-    const match = parsed.pathname.match(/\/(?:e|d|f)\/([a-zA-Z0-9_-]{6,24})/);
+    const match = parsed.pathname.match(/\/(?:e|d|f)\/([a-zA-Z0-9_-]{6,64})/);
     return match ? match[1] : null;
   } catch {
     return null;
@@ -95,8 +111,9 @@ export function normalizeDoodstreamEmbedUrl(input: string): string | null {
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
     try {
       const parsed = new URL(trimmed);
-      if (parsed.pathname.startsWith('/e/')) {
-        return `https://${parsed.hostname}/e/${filecode}`;
+      const hostname = parsed.hostname.replace(/^www\./, '').toLowerCase();
+      if (DEAD_DOODSTREAM_MIRRORS.has(hostname)) {
+        return `https://dood.to/e/${filecode}`;
       }
       return `https://${parsed.hostname}/e/${filecode}`;
     } catch {

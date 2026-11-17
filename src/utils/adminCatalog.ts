@@ -443,7 +443,9 @@ export function appendUploadedEpisodeToSeries(
   seriesId: string,
   payload: UploadedEpisodePayload,
 ): DramaSeries[] {
-  const normalizedEmbed = normalizeDoodstreamEmbedUrl(payload.embedUrl);
+  const normalizedEmbed =
+    normalizeDoodstreamEmbedUrl(payload.embedUrl) ||
+    (payload.filecode ? normalizeDoodstreamEmbedUrl(payload.filecode) : null);
   if (!normalizedEmbed) {
     return [...catalog];
   }
@@ -496,7 +498,9 @@ export function attachUploadedVideoToEpisode(
   episodeNumber: number,
   payload: UploadedEpisodePayload,
 ): DramaSeries[] {
-  const normalizedEmbed = normalizeDoodstreamEmbedUrl(payload.embedUrl);
+  const normalizedEmbed =
+    normalizeDoodstreamEmbedUrl(payload.embedUrl) ||
+    (payload.filecode ? normalizeDoodstreamEmbedUrl(payload.filecode) : null);
   if (!normalizedEmbed) {
     return [...catalog];
   }

@@ -31,6 +31,16 @@ test('normalizeDoodstreamEmbedUrl outputs HTTPS /e/ embed URL', () => {
     normalizeDoodstreamEmbedUrl('https://ds2play.com/d/abc123xyz999'),
     'https://ds2play.com/e/abc123xyz999',
   );
+  assert.equal(
+    normalizeDoodstreamEmbedUrl('https://dsvplay.com/e/1o97l8m7wba0'),
+    'https://dood.to/e/1o97l8m7wba0',
+  );
+  assert.equal(
+    normalizeDoodstreamEmbedUrl(
+      'https://playmogo.com/e/nenr791c5jvcimv45g5wm3fibdi2zsbo',
+    ),
+    'https://playmogo.com/e/nenr791c5jvcimv45g5wm3fibdi2zsbo',
+  );
   assert.equal(normalizeDoodstreamEmbedUrl('not a url'), null);
 });
 
