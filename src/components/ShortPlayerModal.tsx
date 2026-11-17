@@ -891,9 +891,21 @@ export function ShortPlayerModal({
                 {episode.synopsis}
               </p>
               <p className="text-xs text-zinc-400">
-                Episode 1–{series.freeUntilEpisode} langsung gratis · Episode{' '}
-                {series.freeUntilEpisode + 1}–{series.episodes.length} gratis
-                dengan iklan interaktif.
+                {series.freeUntilEpisode >= series.episodes.length
+                  ? series.episodes.length === 1
+                    ? 'Episode 1 langsung gratis tanpa langganan.'
+                    : `Seluruh ${series.episodes.length} episode langsung gratis tanpa langganan.`
+                  : series.freeUntilEpisode <= 0
+                    ? `Episode 1–${series.episodes.length} gratis dengan iklan interaktif.`
+                    : `Episode ${
+                        series.freeUntilEpisode === 1
+                          ? '1'
+                          : `1–${series.freeUntilEpisode}`
+                      } langsung gratis · Episode ${
+                        series.freeUntilEpisode + 1 === series.episodes.length
+                          ? series.episodes.length
+                          : `${series.freeUntilEpisode + 1}–${series.episodes.length}`
+                      } gratis dengan iklan interaktif.`}
               </p>
             </div>
 
