@@ -107,8 +107,17 @@ export function HeroShowcase({
               <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-4 p-4 sm:p-6">
                 <div className="min-w-0 space-y-1">
                   <p className="text-xs font-medium text-zinc-300 truncate">
-                    Ep 1–{series.freeUntilEpisode} gratis · Ep{' '}
-                    {series.freeUntilEpisode + 1}+ via iklan interaktif
+                    {series.freeUntilEpisode >= series.episodes.length
+                      ? series.episodes.length === 1
+                        ? 'Episode 1 gratis langsung'
+                        : `Semua ${series.episodes.length} episode gratis langsung`
+                      : series.freeUntilEpisode <= 0
+                        ? 'Gratis dengan iklan interaktif'
+                        : `Ep ${
+                            series.freeUntilEpisode === 1
+                              ? '1'
+                              : `1–${series.freeUntilEpisode}`
+                          } gratis · Ep ${series.freeUntilEpisode + 1}+ via iklan interaktif`}
                   </p>
                   <p className="font-display text-base sm:text-lg font-semibold text-white truncate">
                     {series.episodes[0]?.title}

@@ -181,3 +181,50 @@ export function getEffectivePlaybackSpeed(
 ): number {
   return isHoldBoosting ? 2 : baseSpeed;
 }
+
+export function shouldAutoHidePlayerHud(params: {
+  isPlaying: boolean;
+  isEnded: boolean;
+  isHudVisible: boolean;
+  isMenuOpen?: boolean;
+}): boolean {
+  return (
+    params.isPlaying &&
+    !params.isEnded &&
+    params.isHudVisible &&
+    !params.isMenuOpen
+  );
+}
+
+export function formatEpisodeAccessSummary(
+  freeUntilEpisode: number,
+  totalEpisodes: number,
+): string {
+  const safeTotal = Math.max(0, Math.floor(totalEpisodes));
+  const safeFree = Math.max(0, Math.min(safeTotal, Math.floor(freeUntilEpisode)));
+
+  if (safeTotal === 0) {
+    return 'Belum ada episode tersedia.';
+  }
+  if (safeFree >= safeTotal) {
+    return safeTotal === 1
+      ? 'Episode 1 gratis langsung tanpa iklan.'
+      : `Semua ${safeTotal} episode gratis langsung tanpa iklan.`;
+  }
+  if (safeFree <= 0) {
+    return safeTotal === 1
+      ? 'Episode 1 gratis dengan iklan interaktif.'
+      : `Episode 1–${safeTotal} gratis dengan iklan interaktif.`;
+  }
+
+  const freeLabel =
+    safeFree === 1 ? 'Episode 1 langsung gratis' : `Episode 1–${safeFree} langsung gratis`;
+  const adStart = safeFree + 1;
+  const adLabel =
+    adStart === safeTotal
+      ? `Episode ${safeTotal} gratis dengan iklan interaktif.`
+      : `Episode ${adStart}–${safeTotal} gratis dengan iklan interaktif.`;
+
+  return `${freeLabel} · ${adLabel}`;
+}
+

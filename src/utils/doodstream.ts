@@ -159,6 +159,51 @@ export function buildAutoplayStreamUrl(
   }
 }
 
+export type VideoSourceType = 'direct' | 'embed';
+
+const DIRECT_VIDEO_EXT_RE = /\.(?:mp4|webm|m4v|ogg|ogv)(?:$|[?#])/i;
+
+export function isDirectVideoUrl(input: string): boolean {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return false;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return false;
+    }
+    return DIRECT_VIDEO_EXT_RE.test(parsed.pathname + parsed.search);
+  } catch {
+    return false;
+  }
+}
+
+export function detectVideoSourceType(input: string): VideoSourceType | null {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (isDirectVideoUrl(trimmed)) {
+    return 'direct';
+  }
+  if (normalizeDoodstreamEmbedUrl(trimmed)) {
+    return 'embed';
+  }
+  return null;
+}
+
+export function normalizeStreamVideoUrl(input: string): string | null {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (isDirectVideoUrl(trimmed)) {
+    return trimmed;
+  }
+  return normalizeDoodstreamEmbedUrl(trimmed);
+}
+
 export function isValidRemoteVideoUrl(url: string): boolean {
   const trimmed = url.trim();
   if (!trimmed) {

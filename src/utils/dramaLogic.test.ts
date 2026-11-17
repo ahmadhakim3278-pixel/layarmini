@@ -6,12 +6,14 @@ import {
   detectVerticalSwipeDirection,
   filterSeries,
   formatDuration,
+  formatEpisodeAccessSummary,
   getEffectivePlaybackSpeed,
   getNextEpisode,
   getPrevEpisode,
   getSubtitleAtTime,
   isEpisodeUnlocked,
   makeEpisodeKey,
+  shouldAutoHidePlayerHud,
   toggleDoubleSpeedOnTap,
   unlockEpisodesWithAd,
   upsertWatchHistory,
@@ -180,3 +182,66 @@ test('getEffectivePlaybackSpeed returns 2x while holding and baseSpeed on releas
   assert.equal(getEffectivePlaybackSpeed(1.25, true), 2);
   assert.equal(getEffectivePlaybackSpeed(1.25, false), 1.25);
 });
+
+test('shouldAutoHidePlayerHud auto-cleans overlays only during active playback when no menu is open', () => {
+  assert.equal(
+    shouldAutoHidePlayerHud({
+      isPlaying: true,
+      isEnded: false,
+      isHudVisible: true,
+      isMenuOpen: false,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldAutoHidePlayerHud({
+      isPlaying: false,
+      isEnded: false,
+      isHudVisible: true,
+      isMenuOpen: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldAutoHidePlayerHud({
+      isPlaying: true,
+      isEnded: true,
+      isHudVisible: true,
+      isMenuOpen: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldAutoHidePlayerHud({
+      isPlaying: true,
+      isEnded: false,
+      isHudVisible: true,
+      isMenuOpen: true,
+    }),
+    false,
+  );
+});
+
+test('formatEpisodeAccessSummary handles single-episode, all-free, and mixed series cleanly', () => {
+  assert.equal(
+    formatEpisodeAccessSummary(1, 1),
+    'Episode 1 gratis langsung tanpa iklan.',
+  );
+  assert.equal(
+    formatEpisodeAccessSummary(5, 5),
+    'Semua 5 episode gratis langsung tanpa iklan.',
+  );
+  assert.equal(
+    formatEpisodeAccessSummary(1, 4),
+    'Episode 1 langsung gratis · Episode 2–4 gratis dengan iklan interaktif.',
+  );
+  assert.equal(
+    formatEpisodeAccessSummary(3, 10),
+    'Episode 1–3 langsung gratis · Episode 4–10 gratis dengan iklan interaktif.',
+  );
+  assert.equal(
+    formatEpisodeAccessSummary(3, 4),
+    'Episode 1–3 langsung gratis · Episode 4 gratis dengan iklan interaktif.',
+  );
+});
+

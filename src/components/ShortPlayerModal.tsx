@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Bookmark,
   Check,
@@ -19,11 +19,13 @@ import type { DramaSeries, Episode } from '../types/drama';
 import {
   detectVerticalSwipeDirection,
   formatDuration,
+  formatEpisodeAccessSummary,
   getEffectivePlaybackSpeed,
   getNextEpisode,
   getPrevEpisode,
   getSubtitleAtTime,
   isEpisodeUnlocked,
+  shouldAutoHidePlayerHud,
 } from '../utils/dramaLogic';
 import { LayarMiniStreamPlayer } from './LayarMiniStreamPlayer';
 import { PosterImage } from './PosterImage';
@@ -72,22 +74,38 @@ export function ShortPlayerModal({
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
   const [isHoldBoosting, setIsHoldBoosting] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
-  const [isMobileEpisodesOpen, setIsMobileEpisodesOpen] = useState(false);
+  const [isEpisodesDrawerOpen, setIsEpisodesDrawerOpen] = useState(false);
   const [isEnded, setIsEnded] = useState(false);
   const [autoNextCountdown, setAutoNextCountdown] = useState<number | null>(null);
-  const [isHudVisible, setIsHudVisible] = useState(true);
+  const [isHudVisible, setIsHudVisible] = useState(false);
+  const [hudActivityTick, setHudActivityTick] = useState(0);
+  const [isStreamReady, setIsStreamReady] = useState(false);
   const [stageNotice, setStageNotice] = useState<string | null>(null);
 
   const audioCtxRef = useRef<AudioContext | null>(null);
   const lastSavedTickRef = useRef<number>(-1);
+  const holdBoostTimerRef = useRef<number | null>(null);
   const pointerStartRef = useRef<{ x: number; y: number; time: number } | null>(
     null,
   );
 
+  const isStreamEpisode = Boolean(episode.doodstreamEmbedUrl);
   const effectiveSpeed = getEffectivePlaybackSpeed(playbackSpeed, isHoldBoosting);
   const nextEpisode = getNextEpisode(series, episode.number);
   const prevEpisode = getPrevEpisode(series, episode.number);
   const activeSubtitle = getSubtitleAtTime(episode.subtitles, currentTimeSec);
+  const episodeAccessSummary = formatEpisodeAccessSummary(
+    series.freeUntilEpisode,
+    series.episodes.length,
+  );
+  const effectiveHudVisible = isStreamEpisode
+    ? isStreamReady && isHudVisible
+    : isHudVisible;
+
+  const revealHud = useCallback(() => {
+    setIsHudVisible(true);
+    setHudActivityTick((prev) => prev + 1);
+  }, []);
 
   // Lock background page scroll so no outer rightmost scrollbar appears while player is open
   useEffect(() => {
@@ -95,6 +113,10 @@ export function ShortPlayerModal({
     document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = prevOverflow;
+      if (holdBoostTimerRef.current !== null) {
+        window.clearTimeout(holdBoostTimerRef.current);
+        holdBoostTimerRef.current = null;
+      }
     };
   }, []);
 
@@ -117,7 +139,7 @@ export function ShortPlayerModal({
     };
   }, [isHoldBoosting]);
 
-  // Reset player state when switching episodes
+  // Reset player state & immediately start in clean-screen mode when switching episodes
   useEffect(() => {
     const startSec =
       initialTimeSec > 0 && initialTimeSec < episode.durationSec - 1
@@ -128,24 +150,43 @@ export function ShortPlayerModal({
     setIsEnded(false);
     setIsHoldBoosting(false);
     setAutoNextCountdown(null);
-    setIsHudVisible(true);
+    setIsHudVisible(false);
+    setIsStreamReady(false);
     lastSavedTickRef.current = -1;
   }, [series.id, episode.number, episode.durationSec, initialTimeSec]);
 
-  // Auto-clean HUD 2 seconds after playback starts or after last interaction
+  // Unified auto-clean timer across BOTH stream and interactive players (mobile + desktop)
   useEffect(() => {
-    if (!isPlaying || isEnded) {
+    if (!isStreamEpisode && (!isPlaying || isEnded)) {
       setIsHudVisible(true);
       return;
     }
-    if (!isHudVisible) {
+    const isActivelyPlaying = isStreamEpisode ? isStreamReady : isPlaying;
+    if (
+      !shouldAutoHidePlayerHud({
+        isPlaying: isActivelyPlaying,
+        isEnded: isStreamEpisode ? false : isEnded,
+        isHudVisible,
+        isMenuOpen: isEpisodesDrawerOpen,
+      })
+    ) {
       return;
     }
+    const autoHideDelayMs = isStreamEpisode ? 3000 : 1800;
     const timer = window.setTimeout(() => {
       setIsHudVisible(false);
-    }, 2000);
+    }, autoHideDelayMs);
     return () => window.clearTimeout(timer);
-  }, [isPlaying, isEnded, isHudVisible, playbackSpeed]);
+  }, [
+    isStreamEpisode,
+    isStreamReady,
+    isPlaying,
+    isEnded,
+    isHudVisible,
+    isEpisodesDrawerOpen,
+    hudActivityTick,
+    playbackSpeed,
+  ]);
 
   useEffect(() => {
     if (!stageNotice) {
@@ -298,14 +339,14 @@ export function ShortPlayerModal({
     setIsEnded(false);
     setAutoNextCountdown(null);
     setIsPlaying(true);
-    setIsHudVisible(true);
+    setIsHudVisible(false);
   };
 
   const handleScrub = (nextVal: number) => {
     setCurrentTimeSec(nextVal);
     setIsEnded(false);
     setAutoNextCountdown(null);
-    setIsHudVisible(true);
+    revealHud();
     onProgressUpdate(episode.number, nextVal, episode.durationSec);
   };
 
@@ -316,8 +357,15 @@ export function ShortPlayerModal({
     const nextIndex = (currentIndex + 1) % SPEED_OPTIONS.length;
     const nextSpeed = SPEED_OPTIONS[nextIndex];
     setPlaybackSpeed(nextSpeed);
-    setIsHudVisible(true);
+    revealHud();
     setStageNotice(`Kecepatan ${nextSpeed}x`);
+  };
+
+  const clearHoldBoostTimer = () => {
+    if (holdBoostTimerRef.current !== null) {
+      window.clearTimeout(holdBoostTimerRef.current);
+      holdBoostTimerRef.current = null;
+    }
   };
 
   const handleStagePointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
@@ -326,14 +374,19 @@ export function ShortPlayerModal({
       y: e.clientY,
       time: Date.now(),
     };
+    clearHoldBoostTimer();
     if (isPlaying && !isEnded) {
-      setIsHoldBoosting(true);
+      // Delay 2x hold-boost activation slightly so normal taps never flash the 2x badge
+      holdBoostTimerRef.current = window.setTimeout(() => {
+        setIsHoldBoosting(true);
+      }, 220);
     }
   };
 
   const handleStagePointerUp = (e: React.PointerEvent<HTMLButtonElement>) => {
     const start = pointerStartRef.current;
     pointerStartRef.current = null;
+    clearHoldBoostTimer();
     setIsHoldBoosting(false);
 
     if (!start) {
@@ -349,7 +402,7 @@ export function ShortPlayerModal({
       if (nextEpisode) {
         handleNavigateEpisode(nextEpisode.number);
       } else {
-        setIsHudVisible(true);
+        revealHud();
         setStageNotice('Ini episode terakhir');
       }
       return;
@@ -358,7 +411,7 @@ export function ShortPlayerModal({
       if (prevEpisode) {
         handleNavigateEpisode(prevEpisode.number);
       } else {
-        setIsHudVisible(true);
+        revealHud();
         setStageNotice('Ini episode pertama');
       }
       return;
@@ -367,14 +420,17 @@ export function ShortPlayerModal({
     if (Math.hypot(deltaX, deltaY) < 12 && heldMs < 220) {
       if (isEnded) {
         handleReplay();
+      } else if (isHudVisible) {
+        setIsHudVisible(false);
       } else {
-        setIsHudVisible(true);
+        revealHud();
       }
     }
   };
 
   const handleStagePointerCancel = () => {
     pointerStartRef.current = null;
+    clearHoldBoostTimer();
     setIsHoldBoosting(false);
   };
 
@@ -402,7 +458,7 @@ export function ShortPlayerModal({
             type="button"
             onClick={() => {
               handleNavigateEpisode(ep.number);
-              setIsMobileEpisodesOpen(false);
+              setIsEpisodesDrawerOpen(false);
             }}
             aria-current={isCurrent ? 'true' : undefined}
             className={`flex min-h-[56px] w-full items-center justify-between gap-3 rounded-xl border px-3.5 py-2.5 text-left transition-colors duration-150 cursor-pointer focus-visible:outline-2 focus-visible:outline-[#E11D48] ${
@@ -464,148 +520,190 @@ export function ShortPlayerModal({
 
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-black/92 lg:p-6 backdrop-blur-md"
+      data-testid="cinema-backdrop"
+      data-clean-mode={effectiveHudVisible ? 'false' : 'true'}
+      onPointerMove={(e) => {
+        if (e.pointerType === 'mouse' && e.buttons === 0 && !isHoldBoosting) {
+          revealHud();
+        }
+      }}
+      className="fixed inset-0 z-40 flex items-center justify-center bg-black"
       role="dialog"
       aria-modal="true"
       aria-label={`Pemutar drama ${series.title} Episode ${episode.number}`}
     >
-      <div className="relative flex h-[100dvh] w-full max-w-6xl flex-col overflow-hidden bg-[#09090B] lg:h-[88vh] lg:rounded-2xl lg:border lg:border-white/12">
-        <div className="hidden lg:flex items-center justify-between gap-4 border-b border-white/8 px-6 py-3.5">
-          <div className="min-w-0">
-            <p className="text-xs text-zinc-400">
-              <span>{series.genre}</span>
-              <span aria-hidden="true" className="mx-2 text-zinc-600">
-                ·
-              </span>
-              <span className="font-mono tabular-nums">
-                Episode {episode.number} dari {series.episodes.length}
-              </span>
-            </p>
-            <h2 className="font-display text-base font-semibold text-white truncate">
-              {series.title} — {episode.title}
-            </h2>
-          </div>
+      {/* Floating Desktop Cinema Header (sits cleanly in left/right cinema wings; auto-hides for 100% clean page) */}
+      <header
+        data-testid="desktop-cinema-header"
+        aria-hidden={!effectiveHudVisible}
+        className={`hidden lg:flex pointer-events-none fixed inset-x-0 top-0 z-30 items-start justify-between gap-4 px-6 pt-5 transition-all duration-300 ${
+          effectiveHudVisible
+            ? 'opacity-100 translate-y-0'
+            : 'opacity-0 -translate-y-2'
+        }`}
+      >
+        <div
+          onPointerEnter={revealHud}
+          className={`max-w-[270px] xl:max-w-[380px] rounded-xl border border-white/10 bg-[#0B0B0E]/82 px-4 py-2.5 backdrop-blur-md ${
+            effectiveHudVisible ? 'pointer-events-auto' : 'pointer-events-none'
+          }`}
+        >
+          <p className="text-[11px] text-zinc-400">
+            <span>{series.genre}</span>
+            <span aria-hidden="true" className="mx-1.5 text-zinc-600">
+              ·
+            </span>
+            <span className="font-mono tabular-nums text-amber-300">
+              Ep {episode.number} / {series.episodes.length}
+            </span>
+          </p>
+          <h2 className="font-display mt-0.5 text-sm font-semibold text-white truncate">
+            {series.title}
+          </h2>
+          <p className="text-xs text-zinc-400 truncate">{episode.title}</p>
+        </div>
+
+        <div
+          onPointerEnter={revealHud}
+          className={`flex items-center gap-2 shrink-0 ${
+            effectiveHudVisible ? 'pointer-events-auto' : 'pointer-events-none'
+          }`}
+        >
+          <button
+            type="button"
+            tabIndex={effectiveHudVisible ? 0 : -1}
+            onClick={() => {
+              setIsEpisodesDrawerOpen(true);
+              revealHud();
+            }}
+            className="inline-flex min-h-[42px] items-center gap-2 rounded-xl border border-white/12 bg-[#0B0B0E]/82 px-3.5 text-xs font-medium text-white backdrop-blur-md transition-colors hover:bg-white/15 cursor-pointer focus-visible:outline-2 focus-visible:outline-[#E11D48]"
+          >
+            <ListVideo className="h-4 w-4 text-amber-300" aria-hidden="true" />
+            <span>Daftar Episode ({series.episodes.length})</span>
+          </button>
 
           <button
             type="button"
+            tabIndex={effectiveHudVisible ? 0 : -1}
             onClick={onClose}
             aria-label="Tutup pemutar video"
-            className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg border border-white/10 text-zinc-300 transition-colors hover:bg-white/10 hover:text-white cursor-pointer focus-visible:outline-2 focus-visible:outline-[#E11D48]"
+            className="flex min-h-[42px] min-w-[42px] items-center justify-center rounded-xl border border-white/12 bg-[#0B0B0E]/82 text-zinc-200 backdrop-blur-md transition-colors hover:bg-white/15 hover:text-white cursor-pointer focus-visible:outline-2 focus-visible:outline-[#E11D48]"
           >
             <X className="h-5 w-5" aria-hidden="true" />
           </button>
         </div>
+      </header>
 
-        <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-12">
-          {/* Vertical 9:16 Theater Stage */}
-          <div className="relative flex min-h-0 items-center justify-center bg-black lg:col-span-7 lg:p-5">
-            <div
-              data-testid="player-stage"
-              data-hud-visible={isHudVisible ? 'true' : 'false'}
-              data-playback-speed={String(effectiveSpeed)}
-              data-video-source={episode.doodstreamEmbedUrl ? 'stream' : 'interactive'}
-              onPointerMove={(e) => {
-                if (
-                  e.pointerType === 'mouse' &&
-                  e.buttons === 0 &&
-                  !isHudVisible &&
-                  !isHoldBoosting
-                ) {
-                  setIsHudVisible(true);
-                }
+      {/* Pure Full-Height Centered 9:16 Vertical Cinema Stage (never shifts or resizes when HUD toggles) */}
+      <div className="relative flex h-[100dvh] w-full items-center justify-center overflow-hidden bg-black">
+        <div
+          data-testid="player-stage"
+          data-hud-visible={effectiveHudVisible ? 'true' : 'false'}
+          data-playback-speed={String(effectiveSpeed)}
+          data-video-source={isStreamEpisode ? 'stream' : 'interactive'}
+          className={`relative h-full w-full max-w-[430px] overflow-hidden bg-black lg:aspect-[9/16] lg:h-[96dvh] lg:max-h-[940px] lg:w-auto lg:max-w-none lg:rounded-2xl select-none transition-[box-shadow] duration-300 ${
+            effectiveHudVisible ? 'lg:ring-1 lg:ring-white/14' : 'lg:ring-0'
+          }`}
+        >
+          {episode.doodstreamEmbedUrl ? (
+            <LayarMiniStreamPlayer
+              series={series}
+              episode={episode}
+              embedUrl={episode.doodstreamEmbedUrl}
+              hasPrevEpisode={Boolean(prevEpisode)}
+              hasNextEpisode={Boolean(nextEpisode)}
+              isSaved={isSaved}
+              isLiked={isLiked}
+              displayLikes={displayLikes}
+              isHudVisible={isHudVisible}
+              onRevealHud={revealHud}
+              onStreamReadyChange={setIsStreamReady}
+              onPrevEpisode={() =>
+                prevEpisode && handleNavigateEpisode(prevEpisode.number)
+              }
+              onNextEpisode={() =>
+                nextEpisode && handleNavigateEpisode(nextEpisode.number)
+              }
+              onToggleSave={onToggleSave}
+              onToggleLike={onToggleLike}
+              onShare={onShare}
+              onOpenMobileEpisodes={() => {
+                setIsEpisodesDrawerOpen(true);
+                revealHud();
               }}
-              className="relative h-full w-full max-w-[430px] overflow-hidden bg-[#111114] lg:aspect-[9/16] lg:h-full lg:w-auto lg:rounded-2xl lg:border lg:border-white/12 select-none"
-            >
-              {episode.doodstreamEmbedUrl ? (
-                <LayarMiniStreamPlayer
-                  series={series}
-                  episode={episode}
-                  embedUrl={episode.doodstreamEmbedUrl}
-                  hasPrevEpisode={Boolean(prevEpisode)}
-                  hasNextEpisode={Boolean(nextEpisode)}
-                  isSaved={isSaved}
-                  isLiked={isLiked}
-                  displayLikes={displayLikes}
-                  onPrevEpisode={() =>
-                    prevEpisode && handleNavigateEpisode(prevEpisode.number)
-                  }
-                  onNextEpisode={() =>
-                    nextEpisode && handleNavigateEpisode(nextEpisode.number)
-                  }
-                  onToggleSave={onToggleSave}
-                  onToggleLike={onToggleLike}
-                  onShare={onShare}
-                  onOpenMobileEpisodes={() => setIsMobileEpisodesOpen(true)}
-                  onClose={onClose}
-                />
-              ) : (
-                <>
-                  <PosterImage
-                    src={series.posterUrl}
-                    alt={`Adegan ${series.title} episode ${episode.number}`}
-                    title={series.title}
-                    className={`h-full w-full object-cover ${
-                      isPlaying && !isEnded
-                        ? 'animate-ken-burns'
-                        : 'animate-ken-burns-paused'
-                    }`}
-                  />
+              onClose={onClose}
+            />
+          ) : (
+            <>
+              <PosterImage
+                src={series.posterUrl}
+                alt={`Adegan ${series.title} episode ${episode.number}`}
+                title={series.title}
+                className={`h-full w-full object-cover ${
+                  isPlaying && !isEnded
+                    ? 'animate-ken-burns'
+                    : 'animate-ken-burns-paused'
+                }`}
+              />
 
-                  {/* Subtle cinematic tint & scrims (fade with HUD for clean viewing) */}
-                  <div
-                    aria-hidden="true"
-                    className={`pointer-events-none absolute inset-0 bg-gradient-to-b from-black/75 via-transparent to-black/90 transition-opacity duration-300 ${
-                      isHudVisible ? 'opacity-100' : 'opacity-25'
-                    }`}
-                  />
+              {/* Subtle cinematic tint & scrims (fade completely to 0 for clean viewing) */}
+              <div
+                aria-hidden="true"
+                className={`pointer-events-none absolute inset-0 bg-gradient-to-b from-black/75 via-transparent to-black/90 transition-opacity duration-300 ${
+                  isHudVisible ? 'opacity-100' : 'opacity-0'
+                }`}
+              />
 
-                  {/* Top Overlay Bar (auto-cleans after 2s during playback) */}
-                  <div
-                    className={`absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-3 p-4 transition-opacity duration-300 ${
-                      isHudVisible
-                        ? 'opacity-100'
-                        : 'pointer-events-none opacity-0'
-                    }`}
+              {/* Top Overlay Bar (auto-cleans during playback) */}
+              <div
+                aria-hidden={!isHudVisible}
+                className={`absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-3 p-4 transition-opacity duration-300 ${
+                  isHudVisible
+                    ? 'opacity-100'
+                    : 'pointer-events-none opacity-0'
+                }`}
+              >
+                <div className="min-w-0">
+                  <p className="font-mono text-[11px] font-semibold tracking-wide text-amber-300">
+                    EP {episode.number} / {series.episodes.length}
+                  </p>
+                  <p className="mt-0.5 text-sm font-semibold text-white truncate">
+                    {episode.title}
+                  </p>
+                  <p className="text-xs text-zinc-300 truncate">
+                    {episode.sceneMood}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    tabIndex={isHudVisible ? 0 : -1}
+                    onClick={() => {
+                      setIsMuted((m) => !m);
+                      revealHud();
+                    }}
+                    aria-label={isMuted ? 'Nyalakan audio suasana' : 'Bisukan audio'}
+                    className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm transition-colors hover:bg-black/80 cursor-pointer"
                   >
-                    <div className="min-w-0">
-                      <p className="font-mono text-[11px] font-semibold tracking-wide text-amber-300">
-                        EP {episode.number} / {series.episodes.length}
-                      </p>
-                      <p className="mt-0.5 text-sm font-semibold text-white truncate">
-                        {episode.title}
-                      </p>
-                      <p className="text-xs text-zinc-300 truncate">
-                        {episode.sceneMood}
-                      </p>
-                    </div>
+                    {isMuted ? (
+                      <VolumeX className="h-4 w-4" aria-hidden="true" />
+                    ) : (
+                      <Volume2 className="h-4 w-4 text-amber-300" aria-hidden="true" />
+                    )}
+                  </button>
 
-                    <div className="flex items-center gap-2 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsMuted((m) => !m);
-                          setIsHudVisible(true);
-                        }}
-                        aria-label={isMuted ? 'Nyalakan audio suasana' : 'Bisukan audio'}
-                        className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm transition-colors hover:bg-black/80 cursor-pointer"
-                      >
-                        {isMuted ? (
-                          <VolumeX className="h-4 w-4" aria-hidden="true" />
-                        ) : (
-                          <Volume2 className="h-4 w-4 text-amber-300" aria-hidden="true" />
-                        )}
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={onClose}
-                        aria-label="Tutup pemutar"
-                        className="lg:hidden flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm transition-colors hover:bg-black/80 cursor-pointer"
-                      >
-                        <X className="h-5 w-5" aria-hidden="true" />
-                      </button>
-                    </div>
-                  </div>
+                  <button
+                    type="button"
+                    tabIndex={isHudVisible ? 0 : -1}
+                    onClick={onClose}
+                    aria-label="Tutup pemutar"
+                    className="lg:hidden flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm transition-colors hover:bg-black/80 cursor-pointer"
+                  >
+                    <X className="h-5 w-5" aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
 
                   {/* Transient feedback for press-and-hold 2x speed or swipe edge */}
                   {(isHoldBoosting || stageNotice) && (
@@ -635,8 +733,9 @@ export function ShortPlayerModal({
                     )}
                   </button>
 
-              {/* Melolo-style Right Vertical Action Rail (auto-cleans after 2s) */}
+              {/* Melolo-style Right Vertical Action Rail (auto-cleans during playback) */}
               <div
+                aria-hidden={!isHudVisible}
                 className={`absolute right-3 bottom-28 z-20 flex flex-col items-center gap-3 transition-opacity duration-300 ${
                   isHudVisible
                     ? 'opacity-100'
@@ -645,9 +744,10 @@ export function ShortPlayerModal({
               >
                 <button
                   type="button"
+                  tabIndex={isHudVisible ? 0 : -1}
                   onClick={() => {
                     onToggleLike();
-                    setIsHudVisible(true);
+                    revealHud();
                   }}
                   aria-label={isLiked ? 'Batalkan suka' : 'Sukai drama ini'}
                   aria-pressed={isLiked}
@@ -666,9 +766,10 @@ export function ShortPlayerModal({
 
                 <button
                   type="button"
+                  tabIndex={isHudVisible ? 0 : -1}
                   onClick={() => {
                     onToggleSave();
-                    setIsHudVisible(true);
+                    revealHud();
                   }}
                   aria-label={isSaved ? 'Hapus dari tersimpan' : 'Simpan drama'}
                   aria-pressed={isSaved}
@@ -686,9 +787,10 @@ export function ShortPlayerModal({
 
                 <button
                   type="button"
+                  tabIndex={isHudVisible ? 0 : -1}
                   onClick={() => {
-                    setIsMobileEpisodesOpen(true);
-                    setIsHudVisible(true);
+                    setIsEpisodesDrawerOpen(true);
+                    revealHud();
                   }}
                   aria-label="Buka daftar episode"
                   className="lg:hidden flex min-h-[44px] min-w-[44px] flex-col items-center justify-center gap-1 rounded-xl bg-black/45 px-2 py-1.5 text-white backdrop-blur-sm transition-colors hover:bg-black/70 cursor-pointer"
@@ -699,9 +801,10 @@ export function ShortPlayerModal({
 
                 <button
                   type="button"
+                  tabIndex={isHudVisible ? 0 : -1}
                   onClick={() => {
                     onShare();
-                    setIsHudVisible(true);
+                    revealHud();
                   }}
                   aria-label="Bagikan tautan drama"
                   className="flex min-h-[44px] min-w-[44px] flex-col items-center justify-center gap-1 rounded-xl bg-black/45 px-2 py-1.5 text-white backdrop-blur-sm transition-colors hover:bg-black/70 cursor-pointer"
@@ -783,8 +886,9 @@ export function ShortPlayerModal({
                 </div>
               )}
 
-              {/* Bottom Playback Controls (auto-cleans after 2s during playback) */}
+              {/* Bottom Playback Controls (auto-cleans during playback) */}
               <div
+                aria-hidden={!isHudVisible}
                 className={`absolute inset-x-0 bottom-0 z-20 space-y-2 px-4 pb-4 pt-2 transition-opacity duration-300 ${
                   isHudVisible
                     ? 'opacity-100'
@@ -797,6 +901,7 @@ export function ShortPlayerModal({
                   </span>
                   <input
                     type="range"
+                    tabIndex={isHudVisible ? 0 : -1}
                     min={0}
                     max={episode.durationSec}
                     step={0.5}
@@ -819,6 +924,7 @@ export function ShortPlayerModal({
                   <div className="flex items-center gap-1">
                     <button
                       type="button"
+                      tabIndex={isHudVisible ? 0 : -1}
                       disabled={!prevEpisode}
                       onClick={() =>
                         prevEpisode && handleNavigateEpisode(prevEpisode.number)
@@ -831,12 +937,13 @@ export function ShortPlayerModal({
 
                     <button
                       type="button"
+                      tabIndex={isHudVisible ? 0 : -1}
                       onClick={() => {
                         if (isEnded) {
                           handleReplay();
                         } else {
                           setIsPlaying((p) => !p);
-                          setIsHudVisible(true);
+                          revealHud();
                         }
                       }}
                       aria-label={isPlaying ? 'Jeda' : 'Putar'}
@@ -851,6 +958,7 @@ export function ShortPlayerModal({
 
                     <button
                       type="button"
+                      tabIndex={isHudVisible ? 0 : -1}
                       disabled={!nextEpisode}
                       onClick={() =>
                         nextEpisode && handleNavigateEpisode(nextEpisode.number)
@@ -864,6 +972,7 @@ export function ShortPlayerModal({
 
                   <button
                     type="button"
+                    tabIndex={isHudVisible ? 0 : -1}
                     onClick={cycleSpeed}
                     aria-label={`Kecepatan putar ${playbackSpeed}x`}
                     className="min-h-[40px] rounded-lg border border-white/15 bg-black/50 px-3 font-mono text-xs font-semibold tabular-nums text-white hover:bg-white/15 cursor-pointer"
@@ -872,14 +981,43 @@ export function ShortPlayerModal({
                   </button>
                 </div>
               </div>
-              </>
-              )}
-            </div>
-          </div>
+            </>
+          )}
+        </div>
+      </div>
 
-          {/* Desktop Episode & Series Detail Drawer */}
-          <aside className="hidden lg:flex lg:col-span-5 flex-col border-l border-white/8 bg-[#111114] min-h-0">
-            <div className="border-b border-white/8 p-5 space-y-2">
+      {/* Unified Slide-Over Episode Drawer (Bottom Sheet on Mobile, Right Drawer on Desktop — never clutters playback) */}
+      {isEpisodesDrawerOpen && (
+        <div
+          data-testid="episodes-drawer"
+          className="fixed inset-0 z-50 flex flex-col justify-end lg:flex-row lg:justify-end bg-black/70 backdrop-blur-sm"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setIsEpisodesDrawerOpen(false);
+            }
+          }}
+        >
+          <aside className="flex max-h-[78dvh] w-full flex-col rounded-t-3xl border-t border-white/12 bg-[#111114] lg:h-full lg:max-h-none lg:w-[380px] lg:rounded-none lg:border-t-0 lg:border-l">
+            <div className="flex items-center justify-between border-b border-white/8 px-5 py-4">
+              <div className="min-w-0">
+                <h3 className="font-display text-base font-semibold text-white truncate">
+                  Daftar Episode ({series.episodes.length})
+                </h3>
+                <p className="mt-0.5 text-xs text-zinc-400">
+                  {episodeAccessSummary}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsEpisodesDrawerOpen(false)}
+                aria-label="Tutup daftar episode"
+                className="flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-lg text-zinc-300 hover:bg-white/10 hover:text-white cursor-pointer"
+              >
+                <X className="h-5 w-5" aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="border-b border-white/8 px-5 py-3.5 space-y-1.5">
               <p className="text-xs text-zinc-400">
                 <span>Sutradara: {series.director}</span>
                 <span aria-hidden="true" className="mx-1.5 text-zinc-600">
@@ -887,21 +1025,9 @@ export function ShortPlayerModal({
                 </span>
                 <span>{series.year}</span>
               </p>
-              <p className="text-sm leading-relaxed text-zinc-300">
+              <p className="text-xs leading-relaxed text-zinc-300">
                 {episode.synopsis}
               </p>
-              <p className="text-xs text-zinc-400">
-                Episode 1–{series.freeUntilEpisode} langsung gratis · Episode{' '}
-                {series.freeUntilEpisode + 1}–{series.episodes.length} gratis
-                dengan iklan interaktif.
-              </p>
-            </div>
-
-            <div className="flex items-center justify-between px-5 py-3 border-b border-white/8">
-              <h3 className="font-display text-sm font-semibold text-white">
-                Daftar Episode ({series.episodes.length})
-              </h3>
-              <span className="text-xs text-zinc-400">Tanpa Langganan</span>
             </div>
 
             <div className="no-scrollbar flex-1 overflow-y-auto p-4">
@@ -909,36 +1035,7 @@ export function ShortPlayerModal({
             </div>
           </aside>
         </div>
-
-        {/* Mobile Slide-up Episode Sheet */}
-        {isMobileEpisodesOpen && (
-          <div className="lg:hidden fixed inset-0 z-50 flex flex-col justify-end bg-black/75 backdrop-blur-sm">
-            <div className="max-h-[75dvh] flex flex-col rounded-t-3xl border-t border-white/12 bg-[#111114]">
-              <div className="flex items-center justify-between border-b border-white/8 px-5 py-4">
-                <div>
-                  <h3 className="font-display text-base font-semibold text-white">
-                    Pilih Episode ({series.episodes.length})
-                  </h3>
-                  <p className="text-xs text-zinc-400">
-                    Ep 1–{series.freeUntilEpisode} gratis · Lainnya via iklan
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsMobileEpisodesOpen(false)}
-                  aria-label="Tutup daftar episode"
-                  className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg text-zinc-300 hover:bg-white/10 cursor-pointer"
-                >
-                  <X className="h-5 w-5" aria-hidden="true" />
-                </button>
-              </div>
-              <div className="no-scrollbar flex-1 overflow-y-auto p-4">
-                {renderEpisodeList()}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
+      )}
     </div>
   );
 }

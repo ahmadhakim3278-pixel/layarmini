@@ -24,6 +24,9 @@ interface LayarMiniStreamPlayerProps {
   isSaved: boolean;
   isLiked: boolean;
   displayLikes: number;
+  isHudVisible: boolean;
+  onRevealHud: () => void;
+  onStreamReadyChange?: (ready: boolean) => void;
   onPrevEpisode: () => void;
   onNextEpisode: () => void;
   onToggleSave: () => void;
@@ -42,6 +45,9 @@ export function LayarMiniStreamPlayer({
   isSaved,
   isLiked,
   displayLikes,
+  isHudVisible,
+  onRevealHud,
+  onStreamReadyChange,
   onPrevEpisode,
   onNextEpisode,
   onToggleSave,
@@ -52,7 +58,6 @@ export function LayarMiniStreamPlayer({
 }: LayarMiniStreamPlayerProps) {
   const [reloadToken, setReloadToken] = useState(0);
   const [isStreamReady, setIsStreamReady] = useState(false);
-  const [isChromeFocused, setIsChromeFocused] = useState(true);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
   const settleTimerRef = useRef<number | null>(null);
@@ -67,10 +72,14 @@ export function LayarMiniStreamPlayer({
     [embedUrl, reloadToken],
   );
 
-  // Reset branded curtain smoothly whenever episode or reload token changes
+  // Sync stream-ready readiness with parent modal so clean-screen auto-hide starts once video boots
+  useEffect(() => {
+    onStreamReadyChange?.(isStreamReady);
+  }, [isStreamReady, onStreamReadyChange]);
+
+  // Reset branded curtain whenever episode or reload token changes
   useEffect(() => {
     setIsStreamReady(false);
-    setIsChromeFocused(true);
 
     // Safety fallback so slow third-party networks never trap the user behind the curtain
     const fallbackTimer = window.setTimeout(() => {
@@ -89,17 +98,6 @@ export function LayarMiniStreamPlayer({
       }
     };
   }, [series.id, episode.number, autoplaySrc]);
-
-  // Softly dim top overlay after playback starts so the frame feels clean & cinematic
-  useEffect(() => {
-    if (!isStreamReady || !isChromeFocused) {
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      setIsChromeFocused(false);
-    }, 3200);
-    return () => window.clearTimeout(timer);
-  }, [isStreamReady, isChromeFocused]);
 
   const dispatchAutoplaySignal = () => {
     const win = iframeRef.current?.contentWindow;
@@ -134,18 +132,16 @@ export function LayarMiniStreamPlayer({
     setReloadToken((prev) => prev + 1);
   };
 
+  const showOverlays = isStreamReady && isHudVisible;
+
   return (
     <div
       data-testid="layarmini-native-stream"
       data-stream-ready={isStreamReady ? 'true' : 'false'}
-      onPointerMove={() => {
-        if (!isChromeFocused) {
-          setIsChromeFocused(true);
-        }
-      }}
+      data-hud-visible={showOverlays ? 'true' : 'false'}
       className="relative flex h-full w-full flex-col bg-black"
     >
-      {/* Full-bleed 9:16 Disguised Cinema Stage */}
+      {/* Full-bleed 100% height 9:16 Disguised Cinema Stage */}
       <div className="relative flex-1 min-h-0 overflow-hidden bg-black">
         {/* Overscan top edge (-top-[52px]) clips upstream player title/logo bar cleanly while keeping bottom controls accessible */}
         <iframe
@@ -160,16 +156,37 @@ export function LayarMiniStreamPlayer({
           className="absolute -top-[52px] -left-[2px] h-[calc(100%+52px)] w-[calc(100%+4px)] border-0 bg-black"
         />
 
-        {/* Top Edge Cinema Scrim Masking Upstream Header Area */}
+        {/* Invisible top-edge reveal strip when screen is in clean mode (never blocks video controls) */}
+        {isStreamReady && !isHudVisible && (
+          <button
+            type="button"
+            data-testid="stream-wake-hud"
+            onClick={onRevealHud}
+            onPointerEnter={(e) => {
+              if (e.pointerType === 'mouse') {
+                onRevealHud();
+              }
+            }}
+            aria-label="Tampilkan kontrol pemutar"
+            className="absolute inset-x-0 top-0 z-20 h-14 bg-transparent cursor-pointer focus-visible:outline-none"
+          />
+        )}
+
+        {/* Top Edge Cinema Scrim (fades out completely to 0 in clean playback mode) */}
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 top-0 z-10 h-28 bg-gradient-to-b from-black/95 via-black/60 to-transparent"
+          className={`pointer-events-none absolute inset-x-0 top-0 z-10 h-28 bg-gradient-to-b from-black/90 via-black/55 to-transparent transition-opacity duration-300 ${
+            showOverlays ? 'opacity-100' : 'opacity-0'
+          }`}
         />
 
-        {/* LayarMini Proprietary Top Header Overlay */}
+        {/* LayarMini Proprietary Top Header Overlay (auto-hidden when video plays) */}
         <div
-          className={`absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-2.5 px-4 pt-3.5 pb-3 transition-opacity duration-300 ${
-            isChromeFocused ? 'opacity-100' : 'opacity-70 hover:opacity-100'
+          aria-hidden={!showOverlays}
+          className={`absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-2.5 px-4 pt-3.5 pb-3 transition-all duration-300 ${
+            showOverlays
+              ? 'opacity-100 translate-y-0'
+              : 'pointer-events-none opacity-0 -translate-y-2'
           }`}
         >
           <div className="min-w-0">
@@ -193,46 +210,56 @@ export function LayarMiniStreamPlayer({
           <div className="flex items-center gap-1.5 shrink-0">
             <button
               type="button"
+              tabIndex={showOverlays ? 0 : -1}
               onClick={handleReloadStream}
               aria-label="Muat ulang pemutar video"
               title="Muat ulang video"
-              className="flex min-h-[40px] min-w-[40px] items-center justify-center rounded-full bg-black/55 text-zinc-200 backdrop-blur-sm transition-colors hover:bg-black/80 hover:text-white cursor-pointer focus-visible:outline-2 focus-visible:outline-[#E11D48]"
+              className="flex min-h-[40px] min-w-[40px] items-center justify-center rounded-full bg-black/60 text-zinc-200 backdrop-blur-sm transition-colors hover:bg-black/85 hover:text-white cursor-pointer focus-visible:outline-2 focus-visible:outline-[#E11D48]"
             >
               <RotateCcw className="h-4 w-4" aria-hidden="true" />
             </button>
 
             <button
               type="button"
+              tabIndex={showOverlays ? 0 : -1}
               onClick={onOpenMobileEpisodes}
               aria-label="Buka daftar episode"
-              className="lg:hidden flex min-h-[40px] min-w-[40px] items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm transition-colors hover:bg-black/80 cursor-pointer"
+              className="lg:hidden flex min-h-[40px] min-w-[40px] items-center justify-center rounded-full bg-black/60 text-white backdrop-blur-sm transition-colors hover:bg-black/85 cursor-pointer"
             >
               <ListVideo className="h-4 w-4" aria-hidden="true" />
             </button>
 
             <button
               type="button"
+              tabIndex={showOverlays ? 0 : -1}
               onClick={onClose}
               aria-label="Tutup pemutar"
-              className="lg:hidden flex min-h-[40px] min-w-[40px] items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm transition-colors hover:bg-black/80 cursor-pointer"
+              className="lg:hidden flex min-h-[40px] min-w-[40px] items-center justify-center rounded-full bg-black/60 text-white backdrop-blur-sm transition-colors hover:bg-black/85 cursor-pointer"
             >
               <X className="h-4 w-4" aria-hidden="true" />
             </button>
           </div>
         </div>
 
-        {/* Floating LayarMini Vertical Action Rail (sits above bottom video controls) */}
+        {/* Floating LayarMini Vertical Action Rail (auto-hidden during clean playback) */}
         <div
-          className={`absolute right-3 bottom-16 z-20 flex flex-col items-center gap-2.5 transition-opacity duration-300 ${
-            isChromeFocused ? 'opacity-100' : 'opacity-65 hover:opacity-100'
+          aria-hidden={!showOverlays}
+          className={`absolute right-3 bottom-32 z-20 flex flex-col items-center gap-2.5 transition-all duration-300 ${
+            showOverlays
+              ? 'opacity-100 translate-x-0'
+              : 'pointer-events-none opacity-0 translate-x-2'
           }`}
         >
           <button
             type="button"
-            onClick={onToggleLike}
+            tabIndex={showOverlays ? 0 : -1}
+            onClick={() => {
+              onToggleLike();
+              onRevealHud();
+            }}
             aria-label={isLiked ? 'Batalkan suka' : 'Sukai drama ini'}
             aria-pressed={isLiked}
-            className="flex min-h-[44px] min-w-[44px] flex-col items-center justify-center gap-1 rounded-xl bg-black/50 px-2 py-1.5 text-white backdrop-blur-sm transition-colors hover:bg-black/75 cursor-pointer"
+            className="flex min-h-[44px] min-w-[44px] flex-col items-center justify-center gap-1 rounded-xl bg-black/55 px-2 py-1.5 text-white backdrop-blur-sm transition-colors hover:bg-black/80 cursor-pointer"
           >
             <Heart
               className={`h-5 w-5 ${
@@ -247,10 +274,14 @@ export function LayarMiniStreamPlayer({
 
           <button
             type="button"
-            onClick={onToggleSave}
+            tabIndex={showOverlays ? 0 : -1}
+            onClick={() => {
+              onToggleSave();
+              onRevealHud();
+            }}
             aria-label={isSaved ? 'Hapus dari tersimpan' : 'Simpan drama'}
             aria-pressed={isSaved}
-            className="flex min-h-[44px] min-w-[44px] flex-col items-center justify-center gap-1 rounded-xl bg-black/50 px-2 py-1.5 text-white backdrop-blur-sm transition-colors hover:bg-black/75 cursor-pointer"
+            className="flex min-h-[44px] min-w-[44px] flex-col items-center justify-center gap-1 rounded-xl bg-black/55 px-2 py-1.5 text-white backdrop-blur-sm transition-colors hover:bg-black/80 cursor-pointer"
           >
             {isSaved ? (
               <Check className="h-5 w-5 text-emerald-400" aria-hidden="true" />
@@ -264,12 +295,52 @@ export function LayarMiniStreamPlayer({
 
           <button
             type="button"
-            onClick={onShare}
+            tabIndex={showOverlays ? 0 : -1}
+            onClick={() => {
+              onShare();
+              onRevealHud();
+            }}
             aria-label="Bagikan tautan drama"
-            className="flex min-h-[44px] min-w-[44px] flex-col items-center justify-center gap-1 rounded-xl bg-black/50 px-2 py-1.5 text-white backdrop-blur-sm transition-colors hover:bg-black/75 cursor-pointer"
+            className="flex min-h-[44px] min-w-[44px] flex-col items-center justify-center gap-1 rounded-xl bg-black/55 px-2 py-1.5 text-white backdrop-blur-sm transition-colors hover:bg-black/80 cursor-pointer"
           >
             <Share2 className="h-5 w-5" aria-hidden="true" />
             <span className="text-[11px] font-medium">Bagikan</span>
+          </button>
+        </div>
+
+        {/* Floating Episode Switcher Dock (auto-hidden during clean playback; floats above video controls when revealed) */}
+        <div
+          aria-hidden={!showOverlays}
+          className={`absolute inset-x-3 bottom-14 z-20 flex items-center justify-between gap-2 rounded-xl border border-white/12 bg-[#0B0B0E]/88 px-2.5 py-2 backdrop-blur-md transition-all duration-300 ${
+            showOverlays
+              ? 'opacity-100 translate-y-0'
+              : 'pointer-events-none opacity-0 translate-y-3'
+          }`}
+        >
+          <button
+            type="button"
+            tabIndex={showOverlays ? 0 : -1}
+            disabled={!hasPrevEpisode}
+            onClick={onPrevEpisode}
+            className="inline-flex min-h-[40px] items-center gap-1 rounded-lg border border-white/10 bg-[#141418] px-3 text-xs font-medium text-zinc-200 transition-colors disabled:opacity-35 hover:bg-white/10 cursor-pointer disabled:cursor-not-allowed"
+          >
+            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+            <span>Sebelumnya</span>
+          </button>
+
+          <span className="font-mono text-[11px] font-medium text-zinc-300 tabular-nums">
+            Ep {episode.number} / {series.episodes.length}
+          </span>
+
+          <button
+            type="button"
+            tabIndex={showOverlays ? 0 : -1}
+            disabled={!hasNextEpisode}
+            onClick={onNextEpisode}
+            className="inline-flex min-h-[40px] items-center gap-1 rounded-lg bg-[#E11D48] px-3.5 text-xs font-semibold text-white transition-colors disabled:opacity-35 hover:bg-[#BE123C] cursor-pointer disabled:cursor-not-allowed"
+          >
+            <span>Selanjutnya</span>
+            <ChevronRight className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
 
@@ -314,33 +385,6 @@ export function LayarMiniStreamPlayer({
             </div>
           </div>
         </div>
-      </div>
-
-      {/* Seamless Dark Cinema Episode Switcher Dock (never overlaps video timeline controls) */}
-      <div className="flex items-center justify-between gap-2 border-t border-white/8 bg-[#0B0B0E] px-3 py-2.5">
-        <button
-          type="button"
-          disabled={!hasPrevEpisode}
-          onClick={onPrevEpisode}
-          className="inline-flex min-h-[40px] items-center gap-1 rounded-lg border border-white/10 bg-[#141418] px-3 text-xs font-medium text-zinc-200 transition-colors disabled:opacity-35 hover:bg-white/10 cursor-pointer disabled:cursor-not-allowed"
-        >
-          <ChevronLeft className="h-4 w-4" aria-hidden="true" />
-          <span>Sebelumnya</span>
-        </button>
-
-        <span className="font-mono text-[11px] font-medium text-zinc-400 tabular-nums">
-          Ep {episode.number} / {series.episodes.length}
-        </span>
-
-        <button
-          type="button"
-          disabled={!hasNextEpisode}
-          onClick={onNextEpisode}
-          className="inline-flex min-h-[40px] items-center gap-1 rounded-lg bg-[#E11D48] px-3.5 text-xs font-semibold text-white transition-colors disabled:opacity-35 hover:bg-[#BE123C] cursor-pointer disabled:cursor-not-allowed"
-        >
-          <span>Selanjutnya</span>
-          <ChevronRight className="h-4 w-4" aria-hidden="true" />
-        </button>
       </div>
     </div>
   );

@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import {
   buildAutoEpisodeTitle,
   buildAutoplayStreamUrl,
+  detectVideoSourceType,
   extractDoodstreamFileCode,
   isValidRemoteVideoUrl,
   normalizeDoodstreamEmbedUrl,
+  normalizeStreamVideoUrl,
   sanitizeDoodstreamFolderName,
 } from './doodstream';
 
@@ -78,4 +80,28 @@ test('buildAutoplayStreamUrl appends autoplay params, canonicalizes dead mirrors
     'https://dood.to/e/jjp9l0ss3cha?autoplay=1&autostart=1&playsinline=1&muted=1&mute=1&r=2',
   );
   assert.equal(buildAutoplayStreamUrl('not-a-valid-link'), null);
+});
+
+test('detectVideoSourceType and normalizeStreamVideoUrl handle direct MP4/WebM and Doodstream embeds', () => {
+  assert.equal(
+    detectVideoSourceType('https://pub-abc.r2.dev/dramas/ep1.mp4'),
+    'direct',
+  );
+  assert.equal(
+    detectVideoSourceType('https://cdn.example.com/video.webm?token=xyz'),
+    'direct',
+  );
+  assert.equal(
+    detectVideoSourceType('https://dsvplay.com/e/jjp9l0ss3cha'),
+    'embed',
+  );
+  assert.equal(detectVideoSourceType('https://example.com/watch'), null);
+  assert.equal(
+    normalizeStreamVideoUrl('https://pub-abc.r2.dev/dramas/ep1.mp4'),
+    'https://pub-abc.r2.dev/dramas/ep1.mp4',
+  );
+  assert.equal(
+    normalizeStreamVideoUrl('https://dsvplay.com/e/jjp9l0ss3cha'),
+    'https://dood.to/e/jjp9l0ss3cha',
+  );
 });
