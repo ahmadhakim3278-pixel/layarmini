@@ -6,7 +6,7 @@ import {
 } from '../types/drama';
 import {
   extractDoodstreamFileCode,
-  normalizeStreamVideoUrl,
+  normalizeDoodstreamEmbedUrl,
 } from './doodstream';
 
 export interface PosterPreset {
@@ -166,10 +166,10 @@ export function validateEpisodeInput(
   }
 
   if (input.doodstreamEmbedUrl?.trim()) {
-    const normalized = normalizeStreamVideoUrl(input.doodstreamEmbedUrl);
+    const normalized = normalizeDoodstreamEmbedUrl(input.doodstreamEmbedUrl);
     if (!normalized) {
       errors.doodstreamEmbedUrl =
-        'Masukkan link embed Doodstream (contoh: https://dood.to/e/kode), filecode, atau link video MP4/WebM langsung yang valid.';
+        'Masukkan link embed Doodstream (contoh: https://dood.to/e/kode) atau filecode yang valid.';
     }
   }
 
@@ -279,7 +279,7 @@ export function upsertEpisodeInSeries(
 
   const rawEmbed = input.doodstreamEmbedUrl?.trim() ?? '';
   const normalizedEmbed = rawEmbed
-    ? normalizeStreamVideoUrl(rawEmbed) ?? undefined
+    ? normalizeDoodstreamEmbedUrl(rawEmbed) ?? undefined
     : undefined;
   const resolvedFileCode =
     input.doodstreamFileCode?.trim() ||
@@ -444,8 +444,8 @@ export function appendUploadedEpisodeToSeries(
   payload: UploadedEpisodePayload,
 ): DramaSeries[] {
   const normalizedEmbed =
-    normalizeStreamVideoUrl(payload.embedUrl) ||
-    (payload.filecode ? normalizeStreamVideoUrl(payload.filecode) : null);
+    normalizeDoodstreamEmbedUrl(payload.embedUrl) ||
+    (payload.filecode ? normalizeDoodstreamEmbedUrl(payload.filecode) : null);
   if (!normalizedEmbed) {
     return [...catalog];
   }
@@ -499,8 +499,8 @@ export function attachUploadedVideoToEpisode(
   payload: UploadedEpisodePayload,
 ): DramaSeries[] {
   const normalizedEmbed =
-    normalizeStreamVideoUrl(payload.embedUrl) ||
-    (payload.filecode ? normalizeStreamVideoUrl(payload.filecode) : null);
+    normalizeDoodstreamEmbedUrl(payload.embedUrl) ||
+    (payload.filecode ? normalizeDoodstreamEmbedUrl(payload.filecode) : null);
   if (!normalizedEmbed) {
     return [...catalog];
   }

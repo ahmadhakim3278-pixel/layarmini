@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bookmark,
   Check,
@@ -6,27 +6,13 @@ import {
   ChevronRight,
   Heart,
   ListVideo,
-  Maximize2,
-  Minimize2,
-  MousePointerClick,
-  Pause,
   Play,
   RotateCcw,
   Share2,
-  ShieldCheck,
-  Volume2,
-  VolumeX,
   X,
 } from 'lucide-react';
 import type { DramaSeries, Episode } from '../types/drama';
-import {
-  buildAutoplayStreamUrl,
-  detectVideoSourceType,
-} from '../utils/doodstream';
-import {
-  detectVerticalSwipeDirection,
-  formatDuration,
-} from '../utils/dramaLogic';
+import { buildAutoplayStreamUrl } from '../utils/doodstream';
 import { PosterImage } from './PosterImage';
 
 interface LayarMiniStreamPlayerProps {
@@ -47,8 +33,6 @@ interface LayarMiniStreamPlayerProps {
   onClose: () => void;
 }
 
-const SPEED_OPTIONS = [1, 1.25, 1.5, 2] as const;
-
 export function LayarMiniStreamPlayer({
   series,
   episode,
@@ -66,73 +50,32 @@ export function LayarMiniStreamPlayer({
   onOpenMobileEpisodes,
   onClose,
 }: LayarMiniStreamPlayerProps) {
-  const sourceEngine = useMemo(
-    () => detectVideoSourceType(embedUrl) ?? 'embed',
-    [embedUrl],
-  );
-  const isDirectEngine = sourceEngine === 'direct';
-
   const [reloadToken, setReloadToken] = useState(0);
   const [isStreamReady, setIsStreamReady] = useState(false);
-  const [isChromeVisible, setIsChromeVisible] = useState(true);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-
-  // Wrapper playback & shield state
-  const [isPlaying, setIsPlaying] = useState(true);
-  const [isMuted, setIsMuted] = useState(false);
-  const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
-  const [currentTimeSec, setCurrentTimeSec] = useState(0);
-  const [durationSec, setDurationSec] = useState(
-    Math.max(5, episode.durationSec || 28),
-  );
-  const [isShieldActive, setIsShieldActive] = useState(true);
-  const [wrapperNotice, setWrapperNotice] = useState<string | null>(null);
-
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [isChromeFocused, setIsChromeFocused] = useState(true);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+
   const settleTimerRef = useRef<number | null>(null);
   const retryPlayTimerRef = useRef<number | null>(null);
-  const pointerStartRef = useRef<{ x: number; y: number; time: number } | null>(
-    null,
-  );
 
-  const autoplaySrc = useMemo(() => {
-    if (isDirectEngine) {
-      return embedUrl;
-    }
-    return (
+  const autoplaySrc = useMemo(
+    () =>
       buildAutoplayStreamUrl(embedUrl, {
         autoplay: true,
         reloadToken,
-      }) ?? embedUrl
-    );
-  }, [embedUrl, isDirectEngine, reloadToken]);
+      }) ?? embedUrl,
+    [embedUrl, reloadToken],
+  );
 
-  const showWrapperNotice = useCallback((msg: string) => {
-    setWrapperNotice(msg);
-  }, []);
-
-  useEffect(() => {
-    if (!wrapperNotice) {
-      return;
-    }
-    const timer = window.setTimeout(() => setWrapperNotice(null), 2200);
-    return () => window.clearTimeout(timer);
-  }, [wrapperNotice]);
-
-  // Reset player & curtain whenever episode or reload changes
+  // Reset branded curtain smoothly whenever episode or reload token changes
   useEffect(() => {
     setIsStreamReady(false);
-    setIsChromeVisible(true);
-    setIsPlaying(true);
-    setCurrentTimeSec(0);
-    setDurationSec(Math.max(5, episode.durationSec || 28));
-    setIsShieldActive(true);
+    setIsChromeFocused(true);
 
+    // Safety fallback so slow third-party networks never trap the user behind the curtain
     const fallbackTimer = window.setTimeout(() => {
       setIsStreamReady(true);
-    }, isDirectEngine ? 1800 : 2400);
+    }, 2800);
 
     return () => {
       window.clearTimeout(fallbackTimer);
@@ -145,371 +88,100 @@ export function LayarMiniStreamPlayer({
         retryPlayTimerRef.current = null;
       }
     };
-  }, [series.id, episode.number, episode.durationSec, autoplaySrc, isDirectEngine]);
+  }, [series.id, episode.number, autoplaySrc]);
 
-  // Sync fullscreen status cleanly
+  // Softly dim top overlay after playback starts so the frame feels clean & cinematic
   useEffect(() => {
-    const onFsChange = () => {
-      setIsFullscreen(document.fullscreenElement === containerRef.current);
-    };
-    document.addEventListener('fullscreenchange', onFsChange);
-    return () => document.removeEventListener('fullscreenchange', onFsChange);
-  }, []);
-
-  // Auto-dim overlay chrome cleanly after inactivity during playback
-  useEffect(() => {
-    if (!isStreamReady || !isChromeVisible || !isPlaying) {
+    if (!isStreamReady || !isChromeFocused) {
       return;
     }
     const timer = window.setTimeout(() => {
-      setIsChromeVisible(false);
-    }, 3400);
+      setIsChromeFocused(false);
+    }, 3200);
     return () => window.clearTimeout(timer);
-  }, [isStreamReady, isChromeVisible, isPlaying, isShieldActive]);
+  }, [isStreamReady, isChromeFocused]);
 
-  // Direct HTML5 <video> autoplay orchestration (with graceful muted fallback if browser policy blocks audio)
-  useEffect(() => {
-    if (!isDirectEngine) {
+  const dispatchAutoplaySignal = () => {
+    const win = iframeRef.current?.contentWindow;
+    if (!win) {
       return;
     }
-    const videoEl = videoRef.current;
-    if (!videoEl) {
-      return;
+    try {
+      win.postMessage({ event: 'command', func: 'playVideo', args: [] }, '*');
+      win.postMessage({ method: 'play' }, '*');
+      win.postMessage({ type: 'play' }, '*');
+      win.postMessage('play', '*');
+    } catch {
+      // Ignore cross-origin postMessage restrictions
     }
-    videoEl.playbackRate = playbackSpeed;
-    let cancelled = false;
-
-    const attemptAutoplay = async () => {
-      try {
-        videoEl.muted = false;
-        await videoEl.play();
-        if (!cancelled) {
-          setIsMuted(false);
-          setIsPlaying(true);
-        }
-      } catch {
-        try {
-          videoEl.muted = true;
-          await videoEl.play();
-          if (!cancelled) {
-            setIsMuted(true);
-            setIsPlaying(true);
-            showWrapperNotice('Audio dibisukan otomatis — ketuk ikon suara');
-          }
-        } catch {
-          if (!cancelled) {
-            setIsPlaying(false);
-          }
-        }
-      }
-    };
-
-    void attemptAutoplay();
-    return () => {
-      cancelled = true;
-    };
-  }, [isDirectEngine, autoplaySrc, reloadToken, showWrapperNotice]);
-
-  // Estimated progress ticker in wrapped embed mode when playing
-  useEffect(() => {
-    if (isDirectEngine || !isStreamReady || !isPlaying) {
-      return;
-    }
-    const timer = window.setInterval(() => {
-      setCurrentTimeSec((prev) =>
-        prev >= durationSec ? durationSec : Math.min(durationSec, prev + 0.5),
-      );
-    }, 500);
-    return () => window.clearInterval(timer);
-  }, [isDirectEngine, isStreamReady, isPlaying, durationSec]);
-
-  const sendIframeCommand = useCallback(
-    (action: 'play' | 'pause' | 'mute' | 'unmute') => {
-      const win = iframeRef.current?.contentWindow;
-      if (!win) {
-        return;
-      }
-      const funcMap = {
-        play: 'playVideo',
-        pause: 'pauseVideo',
-        mute: 'mute',
-        unmute: 'unMute',
-      } as const;
-      try {
-        win.postMessage(
-          { event: 'command', func: funcMap[action], args: [] },
-          '*',
-        );
-        win.postMessage({ method: action }, '*');
-        win.postMessage({ type: action }, '*');
-        win.postMessage(action, '*');
-      } catch {
-        // Ignore cross-origin postMessage restrictions
-      }
-    },
-    [],
-  );
+  };
 
   const handleIframeLoad = () => {
-    sendIframeCommand('play');
+    dispatchAutoplaySignal();
+
+    // Secondary signal after JS player init settles
     retryPlayTimerRef.current = window.setTimeout(() => {
-      sendIframeCommand('play');
+      dispatchAutoplaySignal();
     }, 320);
+
+    // Small settle delay masks upstream splash/branding flicker before fading our poster curtain
     settleTimerRef.current = window.setTimeout(() => {
       setIsStreamReady(true);
     }, 380);
-  };
-
-  const handleTogglePlay = () => {
-    setIsChromeVisible(true);
-    if (isDirectEngine && videoRef.current) {
-      if (videoRef.current.paused) {
-        void videoRef.current.play();
-        setIsPlaying(true);
-      } else {
-        videoRef.current.pause();
-        setIsPlaying(false);
-      }
-      return;
-    }
-
-    const nextPlaying = !isPlaying;
-    setIsPlaying(nextPlaying);
-    sendIframeCommand(nextPlaying ? 'play' : 'pause');
-  };
-
-  const handleToggleMute = () => {
-    setIsChromeVisible(true);
-    if (isDirectEngine && videoRef.current) {
-      const nextMuted = !videoRef.current.muted;
-      videoRef.current.muted = nextMuted;
-      setIsMuted(nextMuted);
-      return;
-    }
-
-    const nextMuted = !isMuted;
-    setIsMuted(nextMuted);
-    sendIframeCommand(nextMuted ? 'mute' : 'unmute');
-  };
-
-  const handleCycleSpeed = () => {
-    setIsChromeVisible(true);
-    const idx = SPEED_OPTIONS.indexOf(
-      playbackSpeed as (typeof SPEED_OPTIONS)[number],
-    );
-    const nextSpeed = SPEED_OPTIONS[(idx + 1) % SPEED_OPTIONS.length];
-    setPlaybackSpeed(nextSpeed);
-    if (isDirectEngine && videoRef.current) {
-      videoRef.current.playbackRate = nextSpeed;
-    }
-    showWrapperNotice(`Kecepatan ${nextSpeed}x`);
-  };
-
-  const handleSeek = (nextSec: number) => {
-    setIsChromeVisible(true);
-    setCurrentTimeSec(nextSec);
-    if (isDirectEngine && videoRef.current) {
-      videoRef.current.currentTime = nextSec;
-    }
-  };
-
-  const handleToggleShield = () => {
-    setIsChromeVisible(true);
-    setIsShieldActive((prev) => {
-      const next = !prev;
-      showWrapperNotice(
-        next
-          ? 'Tameng Anti-Iklan aktif (klik redirect diblokir)'
-          : 'Mode Sentuh Video aktif — ketuk video jika perlu memulai manual',
-      );
-      return next;
-    });
-  };
-
-  const handleToggleFullscreen = async () => {
-    setIsChromeVisible(true);
-    try {
-      if (document.fullscreenElement === containerRef.current) {
-        await document.exitFullscreen();
-      } else if (containerRef.current?.requestFullscreen) {
-        await containerRef.current.requestFullscreen();
-      }
-    } catch {
-      showWrapperNotice('Layar penuh tidak didukung pada browser ini');
-    }
   };
 
   const handleReloadStream = () => {
     setReloadToken((prev) => prev + 1);
   };
 
-  // Transparent Shield gesture handler: blocks redirect clicks & right-clicks while enabling swipe episode switching
-  const handleShieldPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    pointerStartRef.current = {
-      x: e.clientX,
-      y: e.clientY,
-      time: Date.now(),
-    };
-  };
-
-  const handleShieldPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    const start = pointerStartRef.current;
-    pointerStartRef.current = null;
-    if (!start) {
-      return;
-    }
-
-    const dx = e.clientX - start.x;
-    const dy = e.clientY - start.y;
-    const swipeDir = detectVerticalSwipeDirection(dy, dx, 52);
-    if (swipeDir === 'next') {
-      if (hasNextEpisode) {
-        onNextEpisode();
-      } else {
-        showWrapperNotice('Ini episode terakhir');
-      }
-      return;
-    }
-    if (swipeDir === 'prev') {
-      if (hasPrevEpisode) {
-        onPrevEpisode();
-      } else {
-        showWrapperNotice('Ini episode pertama');
-      }
-      return;
-    }
-
-    if (Math.hypot(dx, dy) < 14) {
-      if (isDirectEngine) {
-        handleTogglePlay();
-      } else {
-        setIsChromeVisible((visible) => !visible);
-      }
-    }
-  };
-
-  const progressPct =
-    durationSec > 0 ? Math.min(100, (currentTimeSec / durationSec) * 100) : 0;
-
   return (
     <div
-      ref={containerRef}
       data-testid="layarmini-native-stream"
-      data-player-engine={sourceEngine}
-      data-shield-active={isDirectEngine || isShieldActive ? 'true' : 'false'}
       data-stream-ready={isStreamReady ? 'true' : 'false'}
-      onContextMenu={(e) => e.preventDefault()}
       onPointerMove={() => {
-        if (!isChromeVisible) {
-          setIsChromeVisible(true);
+        if (!isChromeFocused) {
+          setIsChromeFocused(true);
         }
       }}
-      className="relative flex h-full w-full flex-col bg-black select-none"
+      className="relative flex h-full w-full flex-col bg-black"
     >
-      {/* Full-bleed 9:16 LayarMini Custom Cinema Wrapper Stage */}
+      {/* Full-bleed 9:16 Disguised Cinema Stage */}
       <div className="relative flex-1 min-h-0 overflow-hidden bg-black">
-        {isDirectEngine ? (
-          <video
-            key={`${series.id}-${episode.number}-${reloadToken}`}
-            ref={videoRef}
-            src={autoplaySrc}
-            poster={series.posterUrl}
-            playsInline
-            autoPlay
-            preload="auto"
-            controlsList="nodownload noplaybackrate"
-            disablePictureInPicture
-            onLoadedMetadata={(e) => {
-              const vid = e.currentTarget;
-              if (Number.isFinite(vid.duration) && vid.duration > 0) {
-                setDurationSec(Math.round(vid.duration));
-              }
-              setIsStreamReady(true);
-            }}
-            onCanPlay={() => setIsStreamReady(true)}
-            onTimeUpdate={(e) => setCurrentTimeSec(e.currentTarget.currentTime)}
-            onPlay={() => setIsPlaying(true)}
-            onPause={() => setIsPlaying(false)}
-            onEnded={() => {
-              setIsPlaying(false);
-              if (hasNextEpisode) {
-                onNextEpisode();
-              }
-            }}
-            className="h-full w-full bg-black object-cover"
-          />
-        ) : (
-          /* CSS Overscan Wrapper: crops upstream top header/logo bar (-top-[56px]) and hides bottom native bar (-bottom-[52px]) when Shield Mode is active */
-          <iframe
-            key={`${series.id}-${episode.number}-${reloadToken}`}
-            ref={iframeRef}
-            src={autoplaySrc}
-            title={`Pemutar LayarMini — ${series.title} Episode ${episode.number}`}
-            allow="autoplay; fullscreen; picture-in-picture; encrypted-media; accelerometer; gyroscope"
-            referrerPolicy="no-referrer"
-            scrolling="no"
-            onLoad={handleIframeLoad}
-            className={`absolute -left-[4px] w-[calc(100%+8px)] border-0 bg-black transition-all duration-200 ${
-              isShieldActive
-                ? '-top-[56px] h-[calc(100%+108px)]'
-                : '-top-[56px] h-[calc(100%+56px)]'
-            }`}
-          />
-        )}
+        {/* Overscan top edge (-top-[52px]) clips upstream player title/logo bar cleanly while keeping bottom controls accessible */}
+        <iframe
+          key={`${series.id}-${episode.number}-${reloadToken}`}
+          ref={iframeRef}
+          src={autoplaySrc}
+          title={`Pemutar LayarMini — ${series.title} Episode ${episode.number}`}
+          allow="autoplay; fullscreen; picture-in-picture; encrypted-media; accelerometer; gyroscope"
+          referrerPolicy="no-referrer"
+          scrolling="no"
+          onLoad={handleIframeLoad}
+          className="absolute -top-[52px] -left-[2px] h-[calc(100%+52px)] w-[calc(100%+4px)] border-0 bg-black"
+        />
 
-        {/* Permanent Perimeter & Corner Watermark Masks (blocks clicks & hides upstream logos even in Touch mode) */}
+        {/* Top Edge Cinema Scrim Masking Upstream Header Area */}
         <div
           aria-hidden="true"
-          onContextMenu={(e) => e.preventDefault()}
-          className="pointer-events-auto absolute inset-x-0 top-0 z-10 h-24 bg-gradient-to-b from-black via-black/70 to-transparent"
+          className="pointer-events-none absolute inset-x-0 top-0 z-10 h-28 bg-gradient-to-b from-black/95 via-black/60 to-transparent"
         />
-        <div
-          aria-hidden="true"
-          onContextMenu={(e) => e.preventDefault()}
-          className="pointer-events-auto absolute top-0 right-0 z-10 h-20 w-28 bg-gradient-to-bl from-black/95 via-black/50 to-transparent"
-        />
-        {!isDirectEngine && isShieldActive && (
-          <div
-            aria-hidden="true"
-            onContextMenu={(e) => e.preventDefault()}
-            className="pointer-events-auto absolute inset-x-0 bottom-0 z-10 h-28 bg-gradient-to-t from-black via-black/75 to-transparent"
-          />
-        )}
-
-        {/* Transparent Click-Shield Overlay (blocks right-click & Doodstream pop-under ad redirects while supporting vertical swipe) */}
-        {(isDirectEngine || isShieldActive) && (
-          <div
-            data-testid="stream-click-shield"
-            role="presentation"
-            onContextMenu={(e) => e.preventDefault()}
-            onPointerDown={handleShieldPointerDown}
-            onPointerUp={handleShieldPointerUp}
-            onPointerCancel={() => {
-              pointerStartRef.current = null;
-            }}
-            className="absolute inset-0 z-10 touch-pan-x cursor-pointer"
-          />
-        )}
 
         {/* LayarMini Proprietary Top Header Overlay */}
         <div
           className={`absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-2.5 px-4 pt-3.5 pb-3 transition-opacity duration-300 ${
-            isChromeVisible ? 'opacity-100' : 'opacity-75 hover:opacity-100'
+            isChromeFocused ? 'opacity-100' : 'opacity-70 hover:opacity-100'
           }`}
         >
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span
-                className="h-1.5 w-1.5 rounded-full bg-[#E11D48]"
-                aria-hidden="true"
-              />
+              <span className="h-1.5 w-1.5 rounded-full bg-[#E11D48]" aria-hidden="true" />
               <p className="font-mono text-[11px] font-semibold tracking-wide text-amber-300 tabular-nums">
                 EP {episode.number} / {series.episodes.length}
               </p>
               <span aria-hidden="true" className="text-zinc-600 text-[11px]">
                 ·
               </span>
-              <span className="font-display text-[11px] font-semibold tracking-tight text-white/85">
+              <span className="font-display text-[11px] font-semibold tracking-tight text-white/75">
                 LayarMini HD
               </span>
             </div>
@@ -524,7 +196,7 @@ export function LayarMiniStreamPlayer({
               onClick={handleReloadStream}
               aria-label="Muat ulang pemutar video"
               title="Muat ulang video"
-              className="flex min-h-[38px] min-w-[38px] items-center justify-center rounded-full bg-black/60 text-zinc-200 backdrop-blur-sm transition-colors hover:bg-[#E11D48] hover:text-white cursor-pointer focus-visible:outline-2 focus-visible:outline-[#E11D48]"
+              className="flex min-h-[40px] min-w-[40px] items-center justify-center rounded-full bg-black/55 text-zinc-200 backdrop-blur-sm transition-colors hover:bg-black/80 hover:text-white cursor-pointer focus-visible:outline-2 focus-visible:outline-[#E11D48]"
             >
               <RotateCcw className="h-4 w-4" aria-hidden="true" />
             </button>
@@ -533,7 +205,7 @@ export function LayarMiniStreamPlayer({
               type="button"
               onClick={onOpenMobileEpisodes}
               aria-label="Buka daftar episode"
-              className="lg:hidden flex min-h-[38px] min-w-[38px] items-center justify-center rounded-full bg-black/60 text-white backdrop-blur-sm transition-colors hover:bg-black/85 cursor-pointer"
+              className="lg:hidden flex min-h-[40px] min-w-[40px] items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm transition-colors hover:bg-black/80 cursor-pointer"
             >
               <ListVideo className="h-4 w-4" aria-hidden="true" />
             </button>
@@ -542,48 +214,25 @@ export function LayarMiniStreamPlayer({
               type="button"
               onClick={onClose}
               aria-label="Tutup pemutar"
-              className="lg:hidden flex min-h-[38px] min-w-[38px] items-center justify-center rounded-full bg-black/60 text-white backdrop-blur-sm transition-colors hover:bg-black/85 cursor-pointer"
+              className="lg:hidden flex min-h-[40px] min-w-[40px] items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm transition-colors hover:bg-black/80 cursor-pointer"
             >
               <X className="h-4 w-4" aria-hidden="true" />
             </button>
           </div>
         </div>
 
-        {/* Transient Wrapper Notice Pill (only appears briefly on control action) */}
-        {wrapperNotice && (
-          <div
-            role="status"
-            aria-live="polite"
-            className="pointer-events-none absolute top-16 left-1/2 z-30 -translate-x-1/2 whitespace-nowrap rounded-lg border border-white/15 bg-black/85 px-3 py-1.5 text-[11px] font-medium text-zinc-100 backdrop-blur-md shadow-lg"
-          >
-            {wrapperNotice}
-          </div>
-        )}
-
-        {/* Center Play Indicator when Direct Video is Paused */}
-        {isDirectEngine && isStreamReady && !isPlaying && (
-          <button
-            type="button"
-            onClick={handleTogglePlay}
-            aria-label="Putar video"
-            className="absolute top-1/2 left-1/2 z-20 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-[#E11D48]/90 text-white shadow-xl shadow-[#E11D48]/30 transition-transform hover:scale-105 cursor-pointer"
-          >
-            <Play className="h-7 w-7 fill-current translate-x-0.5" aria-hidden="true" />
-          </button>
-        )}
-
-        {/* Floating LayarMini Vertical Action Rail */}
+        {/* Floating LayarMini Vertical Action Rail (sits above bottom video controls) */}
         <div
-          className={`absolute right-3 z-20 flex flex-col items-center gap-2.5 transition-all duration-300 ${
-            isDirectEngine || isShieldActive ? 'bottom-28' : 'bottom-16'
-          } ${isChromeVisible ? 'opacity-100' : 'opacity-65 hover:opacity-100'}`}
+          className={`absolute right-3 bottom-16 z-20 flex flex-col items-center gap-2.5 transition-opacity duration-300 ${
+            isChromeFocused ? 'opacity-100' : 'opacity-65 hover:opacity-100'
+          }`}
         >
           <button
             type="button"
             onClick={onToggleLike}
             aria-label={isLiked ? 'Batalkan suka' : 'Sukai drama ini'}
             aria-pressed={isLiked}
-            className="flex min-h-[44px] min-w-[44px] flex-col items-center justify-center gap-1 rounded-xl bg-black/55 px-2 py-1.5 text-white backdrop-blur-sm transition-colors hover:bg-black/80 cursor-pointer"
+            className="flex min-h-[44px] min-w-[44px] flex-col items-center justify-center gap-1 rounded-xl bg-black/50 px-2 py-1.5 text-white backdrop-blur-sm transition-colors hover:bg-black/75 cursor-pointer"
           >
             <Heart
               className={`h-5 w-5 ${
@@ -601,7 +250,7 @@ export function LayarMiniStreamPlayer({
             onClick={onToggleSave}
             aria-label={isSaved ? 'Hapus dari tersimpan' : 'Simpan drama'}
             aria-pressed={isSaved}
-            className="flex min-h-[44px] min-w-[44px] flex-col items-center justify-center gap-1 rounded-xl bg-black/55 px-2 py-1.5 text-white backdrop-blur-sm transition-colors hover:bg-black/80 cursor-pointer"
+            className="flex min-h-[44px] min-w-[44px] flex-col items-center justify-center gap-1 rounded-xl bg-black/50 px-2 py-1.5 text-white backdrop-blur-sm transition-colors hover:bg-black/75 cursor-pointer"
           >
             {isSaved ? (
               <Check className="h-5 w-5 text-emerald-400" aria-hidden="true" />
@@ -617,130 +266,20 @@ export function LayarMiniStreamPlayer({
             type="button"
             onClick={onShare}
             aria-label="Bagikan tautan drama"
-            className="flex min-h-[44px] min-w-[44px] flex-col items-center justify-center gap-1 rounded-xl bg-black/55 px-2 py-1.5 text-white backdrop-blur-sm transition-colors hover:bg-black/80 cursor-pointer"
+            className="flex min-h-[44px] min-w-[44px] flex-col items-center justify-center gap-1 rounded-xl bg-black/50 px-2 py-1.5 text-white backdrop-blur-sm transition-colors hover:bg-black/75 cursor-pointer"
           >
             <Share2 className="h-5 w-5" aria-hidden="true" />
             <span className="text-[11px] font-medium">Bagikan</span>
           </button>
         </div>
 
-        {/* LayarMini Branded Custom Control Bar (#E11D48 Theme — replaces masked bottom player bar) */}
-        {(isDirectEngine || isShieldActive) && (
-          <div
-            data-testid="layarmini-custom-controls"
-            className={`absolute inset-x-0 bottom-0 z-20 px-3.5 pb-3 pt-6 transition-opacity duration-300 ${
-              isChromeVisible || !isPlaying
-                ? 'opacity-100'
-                : 'opacity-80 hover:opacity-100'
-            }`}
-          >
-            {/* Crimson Progress Track */}
-            <div className="mb-2 flex items-center gap-2">
-              <span className="font-mono text-[10px] tabular-nums text-zinc-300 w-9">
-                {formatDuration(currentTimeSec)}
-              </span>
-              <div className="relative flex-1 flex items-center">
-                <input
-                  type="range"
-                  min={0}
-                  max={durationSec}
-                  step={0.5}
-                  value={Math.min(durationSec, currentTimeSec)}
-                  onChange={(e) => handleSeek(Number(e.target.value))}
-                  aria-label="Progres video LayarMini"
-                  className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-white/20 accent-[#E11D48]"
-                  style={{
-                    background: `linear-gradient(to right, #E11D48 0%, #E11D48 ${progressPct}%, rgba(255,255,255,0.2) ${progressPct}%, rgba(255,255,255,0.2) 100%)`,
-                  }}
-                />
-              </div>
-              <span className="font-mono text-[10px] tabular-nums text-zinc-400 w-9 text-right">
-                {formatDuration(durationSec)}
-              </span>
-            </div>
-
-            {/* Branded Action Buttons */}
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={handleTogglePlay}
-                  aria-label={isPlaying ? 'Jeda video' : 'Putar video'}
-                  className="flex h-9 w-9 items-center justify-center rounded-full bg-[#E11D48] text-white shadow-sm shadow-[#E11D48]/35 transition-colors hover:bg-[#BE123C] cursor-pointer"
-                >
-                  {isPlaying ? (
-                    <Pause className="h-4 w-4 fill-current" aria-hidden="true" />
-                  ) : (
-                    <Play
-                      className="h-4 w-4 fill-current translate-x-0.5"
-                      aria-hidden="true"
-                    />
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleToggleMute}
-                  aria-label={isMuted ? 'Nyalakan suara' : 'Bisukan suara'}
-                  className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/10 text-zinc-100 transition-colors hover:bg-white/20 cursor-pointer"
-                >
-                  {isMuted ? (
-                    <VolumeX className="h-4 w-4 text-amber-300" aria-hidden="true" />
-                  ) : (
-                    <Volume2 className="h-4 w-4" aria-hidden="true" />
-                  )}
-                </button>
-
-                {isDirectEngine && (
-                  <button
-                    type="button"
-                    onClick={handleCycleSpeed}
-                    aria-label={`Kecepatan putar ${playbackSpeed}x`}
-                    className="flex h-9 min-w-[42px] items-center justify-center rounded-lg bg-white/10 px-2 font-mono text-[11px] font-semibold text-white transition-colors hover:bg-white/20 cursor-pointer tabular-nums"
-                  >
-                    {playbackSpeed}x
-                  </button>
-                )}
-              </div>
-
-              <div className="flex items-center gap-1.5">
-                {!isDirectEngine && (
-                  <button
-                    type="button"
-                    onClick={handleToggleShield}
-                    aria-label="Buka kontrol sentuh video langsung"
-                    title="Ketuk untuk mengakses kontrol video langsung jika pemutar memerlukan klik awal"
-                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-500/35 bg-emerald-500/15 px-2.5 text-[11px] font-semibold text-emerald-300 transition-colors hover:bg-emerald-500/25 cursor-pointer"
-                  >
-                    <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
-                    <span>Tameng</span>
-                  </button>
-                )}
-
-                <button
-                  type="button"
-                  onClick={() => void handleToggleFullscreen()}
-                  aria-label={
-                    isFullscreen ? 'Keluar layar penuh' : 'Mode layar penuh'
-                  }
-                  className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/10 text-zinc-100 transition-colors hover:bg-white/20 cursor-pointer"
-                >
-                  {isFullscreen ? (
-                    <Minimize2 className="h-4 w-4" aria-hidden="true" />
-                  ) : (
-                    <Maximize2 className="h-4 w-4" aria-hidden="true" />
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Seamless Branded LayarMini Curtain (masks upstream splash/loading flicker) */}
+        {/* Seamless Branded LayarMini Curtain (masks upstream player boot/loading screen) */}
         <div
           aria-hidden={isStreamReady}
           className={`absolute inset-0 z-30 flex flex-col items-center justify-center bg-[#09090B] transition-opacity duration-500 ${
-            isStreamReady ? 'pointer-events-none opacity-0' : 'opacity-100'
+            isStreamReady
+              ? 'pointer-events-none opacity-0'
+              : 'opacity-100'
           }`}
         >
           <PosterImage
@@ -760,10 +299,7 @@ export function LayarMiniStreamPlayer({
                 aria-hidden="true"
                 className="absolute inset-0 rounded-full border-2 border-[#E11D48]/60 animate-ping"
               />
-              <Play
-                className="h-7 w-7 fill-current translate-x-0.5"
-                aria-hidden="true"
-              />
+              <Play className="h-7 w-7 fill-current translate-x-0.5" aria-hidden="true" />
             </div>
 
             <p className="font-display mt-4 text-sm font-semibold text-white">
@@ -780,7 +316,7 @@ export function LayarMiniStreamPlayer({
         </div>
       </div>
 
-      {/* Seamless Dark Cinema Episode Switcher & Shield Recovery Dock */}
+      {/* Seamless Dark Cinema Episode Switcher Dock (never overlaps video timeline controls) */}
       <div className="flex items-center justify-between gap-2 border-t border-white/8 bg-[#0B0B0E] px-3 py-2.5">
         <button
           type="button"
@@ -792,21 +328,9 @@ export function LayarMiniStreamPlayer({
           <span>Sebelumnya</span>
         </button>
 
-        {!isDirectEngine && !isShieldActive ? (
-          <button
-            type="button"
-            onClick={handleToggleShield}
-            aria-label="Aktifkan kembali tameng anti-iklan"
-            className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-[#E11D48]/45 bg-[#E11D48]/15 px-2.5 text-[11px] font-semibold text-rose-200 transition-colors hover:bg-[#E11D48]/25 cursor-pointer"
-          >
-            <MousePointerClick className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>Kunci Tameng</span>
-          </button>
-        ) : (
-          <span className="font-mono text-[11px] font-medium text-zinc-400 tabular-nums">
-            Ep {episode.number} / {series.episodes.length}
-          </span>
-        )}
+        <span className="font-mono text-[11px] font-medium text-zinc-400 tabular-nums">
+          Ep {episode.number} / {series.episodes.length}
+        </span>
 
         <button
           type="button"

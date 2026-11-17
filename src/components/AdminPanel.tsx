@@ -38,7 +38,7 @@ import {
   buildAutoEpisodeTitle,
   extractDoodstreamFileCode,
   isValidRemoteVideoUrl,
-  normalizeStreamVideoUrl,
+  normalizeDoodstreamEmbedUrl,
   sanitizeDoodstreamFolderName,
 } from '../utils/doodstream';
 import { formatDuration } from '../utils/dramaLogic';
@@ -759,12 +759,12 @@ export function AdminPanel({
     if (!activeSeries) {
       return;
     }
-    const normalizedEmbed = normalizeStreamVideoUrl(inlineEmbedInput);
+    const normalizedEmbed = normalizeDoodstreamEmbedUrl(inlineEmbedInput);
     if (!normalizedEmbed) {
       setInlineFeedback({
         type: 'error',
         message:
-          'Masukkan link embed Doodstream (contoh: https://dood.to/e/kode), filecode, atau link MP4/WebM langsung yang valid.',
+          'Masukkan link embed Doodstream (contoh: https://dood.to/e/kode) atau filecode yang valid.',
       });
       return;
     }
@@ -963,13 +963,13 @@ export function AdminPanel({
     if (!activeSeries) {
       return;
     }
-    const normalizedEmbed = normalizeStreamVideoUrl(perEpisodeEmbedInput);
+    const normalizedEmbed = normalizeDoodstreamEmbedUrl(perEpisodeEmbedInput);
     if (!normalizedEmbed) {
       setPerEpisodeFeedback({
         episodeNumber: ep.number,
         type: 'error',
         message:
-          'Masukkan link embed Doodstream (contoh: https://dood.to/e/kode), filecode, atau link MP4/WebM langsung yang valid.',
+          'Masukkan link embed Doodstream (contoh: https://dood.to/e/kode) atau filecode yang valid.',
       });
       return;
     }
@@ -2756,7 +2756,7 @@ export function AdminPanel({
                       }}
                       onBlur={() => {
                         const val = episodeModal.form.doodstreamEmbedUrl?.trim() ?? '';
-                        const norm = normalizeStreamVideoUrl(val);
+                        const norm = normalizeDoodstreamEmbedUrl(val);
                         if (norm) {
                           setEpisodeModal((prev) =>
                             prev
