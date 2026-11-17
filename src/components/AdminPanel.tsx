@@ -8,8 +8,10 @@ import {
   CloudUpload,
   Film,
   Folder,
+  Globe,
   Link2,
   Loader2,
+  LogOut,
   Pencil,
   Play,
   Plus,
@@ -83,6 +85,11 @@ interface AdminPanelProps {
     payload: UploadedEpisodePayload,
   ) => void;
   onNavigateHome: () => void;
+  adminEmail?: string | null;
+  onSignOut?: () => void;
+  isOnlineCatalogInitialized?: boolean;
+  isSyncingOnline?: boolean;
+  onPublishLocalCatalog?: () => void;
 }
 
 const EDITABLE_GENRES: DramaGenre[] = [
@@ -178,6 +185,11 @@ export function AdminPanel({
   onQuickAddUploadedEpisode,
   onAttachVideoToEpisode,
   onNavigateHome,
+  adminEmail,
+  onSignOut,
+  isOnlineCatalogInitialized = true,
+  isSyncingOnline = false,
+  onPublishLocalCatalog,
 }: AdminPanelProps) {
   const [selectedSeriesId, setSelectedSeriesId] = useState<string>(
     seriesList[0]?.id ?? '',
@@ -1017,7 +1029,12 @@ export function AdminPanel({
             </span>
           </div>
 
-          <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-2.5 shrink-0">
+            {adminEmail && (
+              <span className="hidden md:inline max-w-[200px] truncate text-xs text-zinc-400">
+                {adminEmail}
+              </span>
+            )}
             <a
               href="/"
               onClick={(e) => {
@@ -1029,6 +1046,17 @@ export function AdminPanel({
               <ArrowLeft className="h-4 w-4" aria-hidden="true" />
               <span>Halaman Utama</span>
             </a>
+            {onSignOut && (
+              <button
+                type="button"
+                onClick={onSignOut}
+                aria-label="Keluar dari akun admin"
+                className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-white/12 bg-[#141417] px-3 py-2 text-xs font-medium text-zinc-300 transition-colors hover:border-[#E11D48]/50 hover:text-white cursor-pointer"
+              >
+                <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
+                <span className="hidden sm:inline">Keluar</span>
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -1038,6 +1066,45 @@ export function AdminPanel({
           aria-labelledby="admin-heading"
           className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8"
         >
+          {!isOnlineCatalogInitialized && onPublishLocalCatalog && (
+            <div className="mb-6 flex flex-col gap-4 rounded-2xl border border-amber-500/35 bg-amber-500/10 p-5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3">
+                <Globe
+                  className="mt-0.5 h-5 w-5 shrink-0 text-amber-300"
+                  aria-hidden="true"
+                />
+                <div>
+                  <p className="font-display text-sm font-semibold text-white">
+                    Publikasikan Katalog Perangkat Ini ke Online ({seriesList.length} Film)
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-amber-100/80">
+                    Katalog di browser ini belum disinkronkan ke database online. Klik tombol di
+                    samping agar penonton di HP lain dan semua perangkat langsung melihat daftar
+                    film serta video terbaru Anda.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={isSyncingOnline}
+                onClick={onPublishLocalCatalog}
+                className="inline-flex min-h-[44px] shrink-0 items-center justify-center gap-2 rounded-xl bg-[#E11D48] px-4 py-2.5 text-xs sm:text-sm font-semibold text-white transition-colors hover:bg-[#BE123C] disabled:opacity-60 cursor-pointer"
+              >
+                {isSyncingOnline ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                    <span>Memublikasikan...</span>
+                  </>
+                ) : (
+                  <>
+                    <CloudUpload className="h-4 w-4" aria-hidden="true" />
+                    <span>Publikasikan ke Online</span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
           {/* Top Admin Header */}
           <div className="flex flex-col gap-4 border-b border-white/8 pb-6 md:flex-row md:items-end md:justify-between">
             <div>

@@ -25,6 +25,7 @@ import {
   getSubtitleAtTime,
   isEpisodeUnlocked,
 } from '../utils/dramaLogic';
+import { LayarMiniStreamPlayer } from './LayarMiniStreamPlayer';
 import { PosterImage } from './PosterImage';
 
 interface ShortPlayerModalProps {
@@ -213,9 +214,9 @@ export function ShortPlayerModal({
     return () => window.clearTimeout(timer);
   });
 
-  // Gentle Web Audio ambient chord pulse when unmuted
+  // Gentle Web Audio ambient chord pulse when unmuted (interactive preview episodes only)
   useEffect(() => {
-    if (isMuted || !isPlaying || isEnded) {
+    if (isMuted || !isPlaying || isEnded || episode.doodstreamEmbedUrl) {
       return;
     }
     try {
@@ -254,14 +255,14 @@ export function ShortPlayerModal({
     } catch {
       // Ignore audio errors on restricted environments
     }
-  }, [isMuted, isPlaying, isEnded, episode.number]);
+  }, [isMuted, isPlaying, isEnded, episode.number, episode.doodstreamEmbedUrl]);
 
   // Keyboard shortcuts
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         onClose();
-      } else if (event.key === ' ') {
+      } else if (event.key === ' ' && !episode.doodstreamEmbedUrl) {
         event.preventDefault();
         if (isEnded) {
           setCurrentTimeSec(0);
@@ -274,7 +275,7 @@ export function ShortPlayerModal({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose, isEnded]);
+  }, [onClose, isEnded, episode.doodstreamEmbedUrl]);
 
   const handleNavigateEpisode = (targetNumber: number) => {
     setAutoNextCountdown(null);
@@ -502,7 +503,7 @@ export function ShortPlayerModal({
               data-testid="player-stage"
               data-hud-visible={isHudVisible ? 'true' : 'false'}
               data-playback-speed={String(effectiveSpeed)}
-              data-video-source={episode.doodstreamEmbedUrl ? 'doodstream' : 'interactive'}
+              data-video-source={episode.doodstreamEmbedUrl ? 'stream' : 'interactive'}
               onPointerMove={(e) => {
                 if (
                   e.pointerType === 'mouse' &&
@@ -516,83 +517,27 @@ export function ShortPlayerModal({
               className="relative h-full w-full max-w-[430px] overflow-hidden bg-[#111114] lg:aspect-[9/16] lg:h-full lg:w-auto lg:rounded-2xl lg:border lg:border-white/12 select-none"
             >
               {episode.doodstreamEmbedUrl ? (
-                <div className="relative flex h-full w-full flex-col bg-black">
-                  <div className="flex items-center justify-between gap-2 border-b border-white/10 bg-[#111114] px-4 py-3">
-                    <div className="min-w-0">
-                      <p className="font-mono text-[11px] font-semibold text-amber-300">
-                        EP {episode.number} / {series.episodes.length} · Doodstream
-                      </p>
-                      <p className="text-sm font-semibold text-white truncate">
-                        {episode.title}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => setIsMobileEpisodesOpen(true)}
-                        aria-label="Buka daftar episode"
-                        className="lg:hidden flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg bg-white/10 text-white hover:bg-white/20 cursor-pointer"
-                      >
-                        <ListVideo className="h-4 w-4" aria-hidden="true" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={onClose}
-                        aria-label="Tutup pemutar"
-                        className="lg:hidden flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg bg-white/10 text-white hover:bg-white/20 cursor-pointer"
-                      >
-                        <X className="h-4 w-4" aria-hidden="true" />
-                      </button>
-                    </div>
-                  </div>
-
-                  <iframe
-                    src={episode.doodstreamEmbedUrl}
-                    title={`Video ${series.title} Episode ${episode.number}: ${episode.title}`}
-                    allow="autoplay; fullscreen; picture-in-picture"
-                    referrerPolicy="no-referrer"
-                    className="w-full flex-1 border-0 bg-black"
-                  />
-
-                  <div className="flex items-center justify-between gap-2 border-t border-white/10 bg-[#111114] px-3 py-2.5">
-                    <button
-                      type="button"
-                      disabled={!prevEpisode}
-                      onClick={() =>
-                        prevEpisode && handleNavigateEpisode(prevEpisode.number)
-                      }
-                      className="inline-flex min-h-[40px] items-center gap-1 rounded-lg border border-white/10 px-3 text-xs font-medium text-zinc-200 disabled:opacity-35 hover:bg-white/10 cursor-pointer disabled:cursor-not-allowed"
-                    >
-                      <ChevronLeft className="h-4 w-4" aria-hidden="true" />
-                      <span>Sebelumnya</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={onToggleSave}
-                      className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-white/10 px-3 text-xs font-medium text-zinc-200 hover:bg-white/10 cursor-pointer"
-                    >
-                      {isSaved ? (
-                        <Check className="h-4 w-4 text-emerald-400" aria-hidden="true" />
-                      ) : (
-                        <Bookmark className="h-4 w-4" aria-hidden="true" />
-                      )}
-                      <span>{isSaved ? 'Disimpan' : 'Simpan'}</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={!nextEpisode}
-                      onClick={() =>
-                        nextEpisode && handleNavigateEpisode(nextEpisode.number)
-                      }
-                      className="inline-flex min-h-[40px] items-center gap-1 rounded-lg bg-[#E11D48] px-3 text-xs font-semibold text-white disabled:opacity-35 hover:bg-[#BE123C] cursor-pointer disabled:cursor-not-allowed"
-                    >
-                      <span>Selanjutnya</span>
-                      <ChevronRight className="h-4 w-4" aria-hidden="true" />
-                    </button>
-                  </div>
-                </div>
+                <LayarMiniStreamPlayer
+                  series={series}
+                  episode={episode}
+                  embedUrl={episode.doodstreamEmbedUrl}
+                  hasPrevEpisode={Boolean(prevEpisode)}
+                  hasNextEpisode={Boolean(nextEpisode)}
+                  isSaved={isSaved}
+                  isLiked={isLiked}
+                  displayLikes={displayLikes}
+                  onPrevEpisode={() =>
+                    prevEpisode && handleNavigateEpisode(prevEpisode.number)
+                  }
+                  onNextEpisode={() =>
+                    nextEpisode && handleNavigateEpisode(nextEpisode.number)
+                  }
+                  onToggleSave={onToggleSave}
+                  onToggleLike={onToggleLike}
+                  onShare={onShare}
+                  onOpenMobileEpisodes={() => setIsMobileEpisodesOpen(true)}
+                  onClose={onClose}
+                />
               ) : (
                 <>
                   <PosterImage

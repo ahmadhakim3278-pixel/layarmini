@@ -472,7 +472,7 @@ export function appendUploadedEpisodeToSeries(
       title: episodeTitle,
       synopsis: `${series.title} — ${episodeTitle}`,
       durationSec: safeDuration,
-      sceneMood: payload.sceneMood?.trim() || `${series.title} · Video Doodstream`,
+      sceneMood: payload.sceneMood?.trim() || `${series.title} · Episode ${nextNumber}`,
       accentTint: '#E11D48',
       subtitles: [],
       doodstreamFileCode: resolvedCode,

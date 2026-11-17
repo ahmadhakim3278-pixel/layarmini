@@ -1,0 +1,300 @@
+{
+  "entities": {
+    "DramaSeries": {
+      "title": "DramaSeries",
+      "description": "Published or draft vertical short-drama series displayed on LayarMini and managed by admins.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "URL-safe unique slug matching the Firestore document ID."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "description": "Drama series display title."
+        },
+        "subtitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 220,
+          "description": "Short tagline or subtitle."
+        },
+        "genre": {
+          "type": "string",
+          "enum": ["Romansa", "Misteri", "Keluarga", "Komedi", "Aksi"],
+          "description": "Genre category of the drama."
+        },
+        "year": {
+          "type": "integer",
+          "description": "Release year between 1990 and 2100."
+        },
+        "cast": {
+          "type": "array",
+          "description": "Bounded list of up to 15 cast member names (each <= 80 chars)."
+        },
+        "director": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Director name."
+        },
+        "synopsis": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 1200,
+          "description": "Series synopsis shown on hero and player sidebar."
+        },
+        "posterUrl": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "description": "Poster image URL or bundled preset asset path."
+        },
+        "heroUrl": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "Optional widescreen hero image URL."
+        },
+        "freeUntilEpisode": {
+          "type": "integer",
+          "description": "Number of initial episodes free without interactive ad (0-200)."
+        },
+        "baseLikes": {
+          "type": "integer",
+          "description": "Base display likes count (0-100000000)."
+        },
+        "viewsLabel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60,
+          "description": "Formatted views label."
+        },
+        "sortOrder": {
+          "type": "integer",
+          "description": "Ordering weight (lowest appears first / featured hero)."
+        },
+        "published": {
+          "type": "boolean",
+          "description": "Whether the series is publicly visible to viewers."
+        },
+        "doodstreamFolderId": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Optional Doodstream folder ID bound to this series."
+        },
+        "doodstreamFolderName": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Optional Doodstream folder name."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp (immutable)."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server last-updated timestamp."
+        },
+        "updatedByUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "UID of the verified admin who last saved this document."
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "subtitle",
+        "genre",
+        "year",
+        "cast",
+        "director",
+        "synopsis",
+        "posterUrl",
+        "freeUntilEpisode",
+        "baseLikes",
+        "viewsLabel",
+        "sortOrder",
+        "published",
+        "createdAt",
+        "updatedAt",
+        "updatedByUid"
+      ]
+    },
+    "Episode": {
+      "title": "Episode",
+      "description": "Individual short-drama episode stored under a parent DramaSeries.",
+      "type": "object",
+      "properties": {
+        "seriesId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Parent series document ID (immutable)."
+        },
+        "number": {
+          "type": "integer",
+          "description": "Sequential 1-based episode number (1-500)."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "description": "Episode display title."
+        },
+        "synopsis": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 800,
+          "description": "Episode summary."
+        },
+        "durationSec": {
+          "type": "integer",
+          "description": "Episode duration in seconds (5-3600)."
+        },
+        "sceneMood": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Scene mood or episode caption."
+        },
+        "accentTint": {
+          "type": "string",
+          "minLength": 7,
+          "maxLength": 7,
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "description": "Hex accent color."
+        },
+        "subtitles": {
+          "type": "array",
+          "description": "Bounded list of up to 40 subtitle cue maps."
+        },
+        "doodstreamFileCode": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Optional Doodstream filecode."
+        },
+        "doodstreamEmbedUrl": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Optional canonical HTTPS video embed URL."
+        },
+        "published": {
+          "type": "boolean",
+          "description": "Whether this episode is publicly readable by viewers."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp (immutable)."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server last-updated timestamp."
+        },
+        "updatedByUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "UID of the verified admin who last modified this episode."
+        }
+      },
+      "required": [
+        "seriesId",
+        "number",
+        "title",
+        "synopsis",
+        "durationSec",
+        "sceneMood",
+        "accentTint",
+        "subtitles",
+        "published",
+        "createdAt",
+        "updatedAt",
+        "updatedByUid"
+      ]
+    },
+    "CatalogMeta": {
+      "title": "CatalogMeta",
+      "description": "Singleton catalog synchronization state marker indicating Firestore has been initialized.",
+      "type": "object",
+      "properties": {
+        "initialized": {
+          "type": "boolean",
+          "description": "True once the admin has published or initialized the online catalog."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the last catalog-wide publication."
+        },
+        "updatedByUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "UID of the verified admin who updated the catalog state."
+        }
+      },
+      "required": ["initialized", "updatedAt", "updatedByUid"]
+    },
+    "AdminMember": {
+      "title": "AdminMember",
+      "description": "Restricted RBAC record authorizing a specific Firebase Auth UID as a LayarMini catalog admin.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID matching the document ID."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin"],
+          "description": "Assigned administrative role."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when admin access was granted."
+        },
+        "grantedByUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "UID of the primary admin who granted access."
+        }
+      },
+      "required": ["uid", "role", "createdAt", "grantedByUid"]
+    }
+  },
+  "firestore": {
+    "/series/{seriesId}": {
+      "schema": { "$ref": "#/entities/DramaSeries" },
+      "description": "Publicly readable (when published == true) catalog of drama series; write-restricted to verified admins."
+    },
+    "/series/{seriesId}/episodes/{episodeId}": {
+      "schema": { "$ref": "#/entities/Episode" },
+      "description": "Subcollection of episodes belonging to a parent series; publicly readable when published == true and write-restricted to verified admins."
+    },
+    "/catalogMeta/{metaId}": {
+      "schema": { "$ref": "#/entities/CatalogMeta" },
+      "description": "Singleton initialization state document (metaId == 'state')."
+    },
+    "/admins/{adminUid}": {
+      "schema": { "$ref": "#/entities/AdminMember" },
+      "description": "Private RBAC collection listing additional admin UIDs; writable only by the bootstrapped primary admin."
+    }
+  }
+}

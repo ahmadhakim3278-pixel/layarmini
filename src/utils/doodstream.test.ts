@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildAutoEpisodeTitle,
+  buildAutoplayStreamUrl,
   extractDoodstreamFileCode,
   isValidRemoteVideoUrl,
   normalizeDoodstreamEmbedUrl,
@@ -62,4 +63,19 @@ test('sanitizeDoodstreamFolderName and buildAutoEpisodeTitle produce clean folde
     'pertemuan hujan ep1',
   );
   assert.equal(buildAutoEpisodeTitle('', 4), 'Episode 4');
+});
+
+test('buildAutoplayStreamUrl appends autoplay params, canonicalizes dead mirrors, and supports reload tokens', () => {
+  assert.equal(
+    buildAutoplayStreamUrl('https://dsvplay.com/e/jjp9l0ss3cha'),
+    'https://dood.to/e/jjp9l0ss3cha?autoplay=1&autostart=1&playsinline=1',
+  );
+  assert.equal(
+    buildAutoplayStreamUrl('https://dood.to/e/jjp9l0ss3cha', {
+      muted: true,
+      reloadToken: 2,
+    }),
+    'https://dood.to/e/jjp9l0ss3cha?autoplay=1&autostart=1&playsinline=1&muted=1&mute=1&r=2',
+  );
+  assert.equal(buildAutoplayStreamUrl('not-a-valid-link'), null);
 });

@@ -68,8 +68,8 @@ export function extractDoodstreamFileCode(input: string): string | null {
     return null;
   }
 
-  // Raw filecode or protected embed hash (alphanumeric, 6-64 chars)
-  if (/^[a-zA-Z0-9_-]{6,64}$/.test(trimmed)) {
+  // Raw filecode or protected embed hash (strictly alphanumeric, 6-64 chars)
+  if (/^[a-zA-Z0-9]{6,64}$/.test(trimmed)) {
     return trimmed;
   }
 
@@ -122,6 +122,41 @@ export function normalizeDoodstreamEmbedUrl(input: string): string | null {
   }
 
   return `https://dood.to/e/${filecode}`;
+}
+
+export interface AutoplayStreamOptions {
+  autoplay?: boolean;
+  muted?: boolean;
+  reloadToken?: number;
+}
+
+export function buildAutoplayStreamUrl(
+  rawEmbedUrl: string,
+  options: AutoplayStreamOptions = {},
+): string | null {
+  const canonical = normalizeDoodstreamEmbedUrl(rawEmbedUrl);
+  if (!canonical) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(canonical);
+    if (options.autoplay !== false) {
+      parsed.searchParams.set('autoplay', '1');
+      parsed.searchParams.set('autostart', '1');
+      parsed.searchParams.set('playsinline', '1');
+    }
+    if (options.muted) {
+      parsed.searchParams.set('muted', '1');
+      parsed.searchParams.set('mute', '1');
+    }
+    if (options.reloadToken && options.reloadToken > 0) {
+      parsed.searchParams.set('r', String(options.reloadToken));
+    }
+    return parsed.toString();
+  } catch {
+    return canonical;
+  }
 }
 
 export function isValidRemoteVideoUrl(url: string): boolean {

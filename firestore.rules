@@ -1,0 +1,335 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ── Core Primitives ────────────────────────────────────────────────────────
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerifiedUser()
+        && request.auth.token.email == 'ahmadhakim3278@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin()
+        || (isVerifiedUser() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+    }
+
+    // ── Validation Blueprints (Synchronized verbatim with firebase-blueprint.json) ──
+    function isValidOptionalString(data, field, maxLen) {
+      return !(field in data) || (data[field] is string && data[field].size() <= maxLen);
+    }
+
+    function isValidSubtitleCue(cue) {
+      return cue is map
+        && cue.keys().hasAll(['startSec', 'endSec', 'speaker', 'text'])
+        && cue.keys().hasOnly(['startSec', 'endSec', 'speaker', 'text'])
+        && cue.startSec is number && cue.startSec >= 0 && cue.startSec <= 3600
+        && cue.endSec is number && cue.endSec > cue.startSec && cue.endSec <= 3600
+        && cue.speaker is string && cue.speaker.size() >= 1 && cue.speaker.size() <= 80
+        && cue.text is string && cue.text.size() >= 1 && cue.text.size() <= 240;
+    }
+
+    function isValidSeries(data, seriesId) {
+      return data.keys().hasAll([
+          'id',
+          'title',
+          'subtitle',
+          'genre',
+          'year',
+          'cast',
+          'director',
+          'synopsis',
+          'posterUrl',
+          'freeUntilEpisode',
+          'baseLikes',
+          'viewsLabel',
+          'sortOrder',
+          'published',
+          'createdAt',
+          'updatedAt',
+          'updatedByUid'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'title',
+          'subtitle',
+          'genre',
+          'year',
+          'cast',
+          'director',
+          'synopsis',
+          'posterUrl',
+          'heroUrl',
+          'freeUntilEpisode',
+          'baseLikes',
+          'viewsLabel',
+          'sortOrder',
+          'published',
+          'doodstreamFolderId',
+          'doodstreamFolderName',
+          'createdAt',
+          'updatedAt',
+          'updatedByUid'
+        ])
+        && data.id is string && data.id == seriesId && isValidId(data.id)
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 160
+        && data.subtitle is string && data.subtitle.size() >= 1 && data.subtitle.size() <= 220
+        && data.genre is string && data.genre.size() <= 32
+        && data.genre in ['Romansa', 'Misteri', 'Keluarga', 'Komedi', 'Aksi']
+        && data.year is int && data.year >= 1990 && data.year <= 2100
+        && data.cast is list && data.cast.size() <= 15
+        && (data.cast.size() == 0 || (data.cast[0] is string && data.cast[0].size() >= 1 && data.cast[0].size() <= 80))
+        && data.director is string && data.director.size() >= 1 && data.director.size() <= 120
+        && data.synopsis is string && data.synopsis.size() >= 10 && data.synopsis.size() <= 1200
+        && data.posterUrl is string && data.posterUrl.size() >= 1 && data.posterUrl.size() <= 1000
+        && isValidOptionalString(data, 'heroUrl', 1000)
+        && data.freeUntilEpisode is int && data.freeUntilEpisode >= 0 && data.freeUntilEpisode <= 200
+        && data.baseLikes is int && data.baseLikes >= 0 && data.baseLikes <= 100000000
+        && data.viewsLabel is string && data.viewsLabel.size() >= 1 && data.viewsLabel.size() <= 60
+        && data.sortOrder is int && data.sortOrder >= 0 && data.sortOrder <= 10000
+        && data.published is bool
+        && isValidOptionalString(data, 'doodstreamFolderId', 64)
+        && isValidOptionalString(data, 'doodstreamFolderName', 120)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp
+        && data.updatedByUid is string && data.updatedByUid.size() >= 1 && data.updatedByUid.size() <= 128
+        && data.updatedByUid == request.auth.uid;
+    }
+
+    function isValidEpisode(data, seriesId) {
+      return data.keys().hasAll([
+          'seriesId',
+          'number',
+          'title',
+          'synopsis',
+          'durationSec',
+          'sceneMood',
+          'accentTint',
+          'subtitles',
+          'published',
+          'createdAt',
+          'updatedAt',
+          'updatedByUid'
+        ])
+        && data.keys().hasOnly([
+          'seriesId',
+          'number',
+          'title',
+          'synopsis',
+          'durationSec',
+          'sceneMood',
+          'accentTint',
+          'subtitles',
+          'doodstreamFileCode',
+          'doodstreamEmbedUrl',
+          'published',
+          'createdAt',
+          'updatedAt',
+          'updatedByUid'
+        ])
+        && data.seriesId is string && data.seriesId == seriesId && isValidId(data.seriesId)
+        && data.number is int && data.number >= 1 && data.number <= 500
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 160
+        && data.synopsis is string && data.synopsis.size() >= 1 && data.synopsis.size() <= 800
+        && data.durationSec is int && data.durationSec >= 5 && data.durationSec <= 3600
+        && data.sceneMood is string && data.sceneMood.size() >= 1 && data.sceneMood.size() <= 200
+        && data.accentTint is string && data.accentTint.size() == 7 && data.accentTint.matches('^#[0-9a-fA-F]{6}$')
+        && data.subtitles is list && data.subtitles.size() <= 40
+        && (data.subtitles.size() == 0 || isValidSubtitleCue(data.subtitles[0]))
+        && isValidOptionalString(data, 'doodstreamFileCode', 80)
+        && isValidOptionalString(data, 'doodstreamEmbedUrl', 500)
+        && data.published is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp
+        && data.updatedByUid is string && data.updatedByUid.size() >= 1 && data.updatedByUid.size() <= 128
+        && data.updatedByUid == request.auth.uid;
+    }
+
+    function isValidCatalogMeta(data) {
+      return data.keys().hasAll(['initialized', 'updatedAt', 'updatedByUid'])
+        && data.keys().hasOnly(['initialized', 'updatedAt', 'updatedByUid'])
+        && data.initialized is bool
+        && data.updatedAt is timestamp
+        && data.updatedByUid is string && data.updatedByUid.size() >= 1 && data.updatedByUid.size() <= 128
+        && data.updatedByUid == request.auth.uid;
+    }
+
+    function isValidAdminMember(data, adminUid) {
+      return data.keys().hasAll(['uid', 'role', 'createdAt', 'grantedByUid'])
+        && data.keys().hasOnly(['uid', 'role', 'createdAt', 'grantedByUid'])
+        && data.uid is string && data.uid == adminUid && isValidId(data.uid)
+        && data.role is string && data.role.size() <= 16 && data.role == 'admin'
+        && data.createdAt is timestamp
+        && data.grantedByUid is string && data.grantedByUid.size() >= 1 && data.grantedByUid.size() <= 128
+        && data.grantedByUid == request.auth.uid;
+    }
+
+    // ── /series/{seriesId} ─────────────────────────────────────────────────────
+    match /series/{seriesId} {
+      allow get: if isValidId(seriesId) && (existing().published == true || isAdmin());
+      allow list: if existing().published == true || isAdmin();
+
+      allow create: if isVerifiedUser()
+        && isValidId(seriesId)
+        && isValidSeries(incoming(), seriesId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isAdmin();
+
+      allow update: if isVerifiedUser()
+        && isValidId(seriesId)
+        && isValidSeries(incoming(), seriesId)
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action: Update series ordering (featured hero toggle)
+          (incoming().diff(existing()).affectedKeys().hasOnly(['sortOrder', 'updatedAt', 'updatedByUid']) && isAdmin()) ||
+          // Action: Bind Doodstream folder
+          (incoming().diff(existing()).affectedKeys().hasOnly(['doodstreamFolderId', 'doodstreamFolderName', 'updatedAt', 'updatedByUid']) && isAdmin()) ||
+          // Action: Full editorial update by verified admin
+          (incoming().diff(existing()).affectedKeys().hasOnly([
+            'title',
+            'subtitle',
+            'genre',
+            'year',
+            'cast',
+            'director',
+            'synopsis',
+            'posterUrl',
+            'heroUrl',
+            'freeUntilEpisode',
+            'baseLikes',
+            'viewsLabel',
+            'sortOrder',
+            'published',
+            'doodstreamFolderId',
+            'doodstreamFolderName',
+            'updatedAt',
+            'updatedByUid'
+          ]) && isAdmin())
+        );
+
+      allow delete: if isVerifiedUser()
+        && isValidId(seriesId)
+        && isAdmin();
+
+      // ── /series/{seriesId}/episodes/{episodeId} ──────────────────────────────
+      match /episodes/{episodeId} {
+        allow get: if isValidId(seriesId) && isValidId(episodeId)
+          && (existing().published == true || isAdmin());
+        allow list: if isValidId(seriesId)
+          && (existing().published == true || isAdmin());
+
+        allow create: if isVerifiedUser()
+          && isValidId(seriesId)
+          && isValidId(episodeId)
+          && isValidEpisode(incoming(), seriesId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isAdmin()
+          && existsAfter(/databases/$(database)/documents/series/$(seriesId));
+
+        allow update: if isVerifiedUser()
+          && isValidId(seriesId)
+          && isValidId(episodeId)
+          && isValidEpisode(incoming(), seriesId)
+          && incoming().seriesId == existing().seriesId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            // Action: Reorder episode number
+            (incoming().diff(existing()).affectedKeys().hasOnly(['number', 'updatedAt', 'updatedByUid']) && isAdmin()) ||
+            // Action: Attach uploaded Doodstream video to existing episode
+            (incoming().diff(existing()).affectedKeys().hasOnly(['durationSec', 'doodstreamFileCode', 'doodstreamEmbedUrl', 'updatedAt', 'updatedByUid']) && isAdmin()) ||
+            // Action: Full episode editorial update by verified admin
+            (incoming().diff(existing()).affectedKeys().hasOnly([
+              'number',
+              'title',
+              'synopsis',
+              'durationSec',
+              'sceneMood',
+              'accentTint',
+              'subtitles',
+              'doodstreamFileCode',
+              'doodstreamEmbedUrl',
+              'published',
+              'updatedAt',
+              'updatedByUid'
+            ]) && isAdmin())
+          )
+          && exists(/databases/$(database)/documents/series/$(seriesId));
+
+        allow delete: if isVerifiedUser()
+          && isValidId(seriesId)
+          && isValidId(episodeId)
+          && isAdmin();
+      }
+    }
+
+    // ── /catalogMeta/{metaId} ──────────────────────────────────────────────────
+    match /catalogMeta/{metaId} {
+      allow get: if isValidId(metaId) && metaId == 'state';
+      allow list: if false;
+
+      allow create: if isVerifiedUser()
+        && isValidId(metaId)
+        && metaId == 'state'
+        && isValidCatalogMeta(incoming())
+        && incoming().updatedAt == request.time
+        && isAdmin();
+
+      allow update: if isVerifiedUser()
+        && isValidId(metaId)
+        && metaId == 'state'
+        && isValidCatalogMeta(incoming())
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['initialized', 'updatedAt', 'updatedByUid'])
+        && isAdmin();
+
+      allow delete: if false;
+    }
+
+    // ── /admins/{adminUid} ─────────────────────────────────────────────────────
+    match /admins/{adminUid} {
+      allow get: if isVerifiedUser()
+        && isValidId(adminUid)
+        && (request.auth.uid == adminUid || isBootstrappedAdmin());
+      allow list: if false;
+
+      allow create: if isBootstrappedAdmin()
+        && isValidId(adminUid)
+        && isValidAdminMember(incoming(), adminUid)
+        && incoming().createdAt == request.time;
+
+      allow update: if false;
+
+      allow delete: if isBootstrappedAdmin()
+        && isValidId(adminUid);
+    }
+  }
+}

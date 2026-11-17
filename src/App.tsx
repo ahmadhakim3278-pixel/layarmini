@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
 import {
   Bookmark,
   History,
@@ -7,6 +8,7 @@ import {
   Search,
   Trash2,
 } from 'lucide-react';
+import { AdminAuthGate } from './components/AdminAuthGate';
 import { AdminPanel } from './components/AdminPanel';
 import { HeaderNav } from './components/HeaderNav';
 import { HeroShowcase } from './components/HeroShowcase';
@@ -15,6 +17,17 @@ import { PosterImage } from './components/PosterImage';
 import { SeriesCard } from './components/SeriesCard';
 import { ShortPlayerModal } from './components/ShortPlayerModal';
 import { DRAMA_SERIES, INTERACTIVE_AD_CAMPAIGNS } from './data/dramas';
+import { auth } from './firebase';
+import {
+  bindSeriesFolderInFirestore,
+  deleteSeriesDocFromFirestore,
+  publishCatalogToFirestore,
+  saveSeriesDocToFirestore,
+  subscribeToOnlineCatalog,
+  syncSeriesEpisodesInFirestore,
+  updateCatalogSortOrderInFirestore,
+  verifyAdminAccess,
+} from './services/catalogFirestore';
 import {
   DramaGenre,
   NavSection,
@@ -110,13 +123,33 @@ export default function App() {
       : 'LayarMini — Short Movie & Drama Pendek Gratis';
   }, [isAdminRoute]);
 
-  const [seriesCatalog, setSeriesCatalog] = useState<DramaSeries[]>(() => {
+  const [authReady, setAuthReady] = useState(false);
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [isCheckingAdmin, setIsCheckingAdmin] = useState(false);
+
+  const [onlineCatalogReady, setOnlineCatalogReady] = useState(false);
+  const [isOnlineCatalogInitialized, setIsOnlineCatalogInitialized] = useState(false);
+  const [isSyncingOnline, setIsSyncingOnline] = useState(false);
+  const [fatalFirestoreError, setFatalFirestoreError] = useState<Error | null>(null);
+
+  const [localCatalogDraft] = useState<DramaSeries[]>(() => {
     const stored = readStorageJson<DramaSeries[] | null>(
       STORAGE_KEYS.catalog,
       null,
     );
-    return Array.isArray(stored) ? stored : DRAMA_SERIES;
+    return Array.isArray(stored) && stored.length > 0 ? stored : DRAMA_SERIES;
   });
+
+  const [seriesCatalog, setSeriesCatalog] = useState<DramaSeries[]>(() =>
+    typeof window !== 'undefined' &&
+    (window.location.pathname === '/admin' ||
+      window.location.pathname.startsWith('/admin/'))
+      ? localCatalogDraft
+      : DRAMA_SERIES,
+  );
+  const seriesCatalogRef = useRef<DramaSeries[]>(seriesCatalog);
+  seriesCatalogRef.current = seriesCatalog;
 
   const [unlockedKeys, setUnlockedKeys] = useState<string[]>(() =>
     readStorageJson<string[]>(STORAGE_KEYS.unlocked, []),
@@ -158,21 +191,79 @@ export default function App() {
     if (!toastMessage) {
       return;
     }
-    const timer = window.setTimeout(() => setToastMessage(null), 3000);
+    const timer = window.setTimeout(() => setToastMessage(null), 3400);
     return () => window.clearTimeout(timer);
   }, [toastMessage]);
 
-  // Persist catalog & user progress to localStorage
+  // Monitor Firebase Auth session & admin authorization
   useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        STORAGE_KEYS.catalog,
-        JSON.stringify(seriesCatalog),
-      );
-    } catch {
-      // Ignore storage quota errors
+    let active = true;
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (!active) {
+        return;
+      }
+      setAuthUser(user);
+      if (!user) {
+        setIsAdmin(false);
+        setIsCheckingAdmin(false);
+        setAuthReady(true);
+        return;
+      }
+      setIsCheckingAdmin(true);
+      void verifyAdminAccess(user)
+        .then((allowed) => {
+          if (!active) {
+            return;
+          }
+          setIsAdmin(allowed);
+          setIsCheckingAdmin(false);
+          setAuthReady(true);
+        })
+        .catch(() => {
+          if (!active) {
+            return;
+          }
+          setIsAdmin(false);
+          setIsCheckingAdmin(false);
+          setAuthReady(true);
+        });
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+
+  // Subscribe to real-time Firestore catalog once auth state is settled
+  useEffect(() => {
+    if (!authReady) {
+      return;
     }
-  }, [seriesCatalog]);
+    const unsubscribe = subscribeToOnlineCatalog({
+      isAdmin,
+      onUpdate: (snapshot) => {
+        setOnlineCatalogReady(snapshot.ready);
+        setIsOnlineCatalogInitialized(snapshot.isInitialized);
+        if (snapshot.isInitialized) {
+          setSeriesCatalog(snapshot.seriesList);
+        } else {
+          setSeriesCatalog(isAdminRoute ? localCatalogDraft : DRAMA_SERIES);
+        }
+      },
+      onError: (error) => {
+        setFatalFirestoreError(error);
+      },
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [authReady, isAdmin, isAdminRoute, localCatalogDraft]);
+
+  if (fatalFirestoreError) {
+    throw fatalFirestoreError;
+  }
 
   useEffect(() => {
     try {
@@ -229,15 +320,48 @@ export default function App() {
     }
   }, [adsCompletedCount]);
 
-  // Support ?autostart=1 on consumer pages to jump directly into the featured player
+  // Support ?autostart=1 and shared ?series=<id>&ep=<n> deep links on consumer pages
+  const deepLinkAppliedRef = useRef(false);
   useEffect(() => {
-    if (isAdminRoute) {
+    if (isAdminRoute || deepLinkAppliedRef.current) {
       return;
     }
     const params = new URLSearchParams(window.location.search);
+    const sharedSeriesId = params.get('series');
+    if (sharedSeriesId) {
+      if (!onlineCatalogReady && !seriesCatalog.some((s) => s.id === sharedSeriesId)) {
+        return;
+      }
+      const matched = seriesCatalog.find((s) => s.id === sharedSeriesId);
+      if (matched && matched.episodes.length > 0) {
+        const requestedEp = Number(params.get('ep') ?? '1');
+        const safeEp = Number.isFinite(requestedEp)
+          ? Math.max(1, Math.min(Math.floor(requestedEp), matched.episodes.length))
+          : 1;
+        deepLinkAppliedRef.current = true;
+        if (
+          isEpisodeUnlocked(
+            matched.id,
+            safeEp,
+            matched.freeUntilEpisode,
+            unlockedKeys,
+          )
+        ) {
+          setPlayerState({
+            seriesId: matched.id,
+            episodeNumber: safeEp,
+            initialTimeSec: 0,
+          });
+        } else {
+          setPendingAdUnlock({ series: matched, episodeNumber: safeEp });
+        }
+      }
+      return;
+    }
     if (params.get('autostart') === '1') {
       const lead = seriesCatalog[0];
       if (lead && lead.episodes.length > 0) {
+        deepLinkAppliedRef.current = true;
         setPlayerState({
           seriesId: lead.id,
           episodeNumber: 1,
@@ -245,7 +369,7 @@ export default function App() {
         });
       }
     }
-  }, []);
+  }, [isAdminRoute, onlineCatalogReady, seriesCatalog, unlockedKeys]);
 
   const featuredSeries = seriesCatalog[0] ?? null;
 
@@ -422,42 +546,127 @@ export default function App() {
     [showToast],
   );
 
-  // Admin catalog management handlers
+  // Persist admin mutations to Firebase Firestore so all viewer devices update in real time
+  const runOnlineSync = useCallback(
+    async (task: (uid: string) => Promise<void>, successMessage?: string) => {
+      if (!authUser || !isAdmin) {
+        showToast('Masuk sebagai admin untuk menyimpan perubahan online.');
+        return;
+      }
+      setIsSyncingOnline(true);
+      try {
+        await task(authUser.uid);
+        if (successMessage) {
+          showToast(successMessage);
+        }
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        if (msg.includes('Quota exceeded')) {
+          showToast('Batas kuota harian database tercapai. Coba lagi besok.');
+        } else {
+          showToast(
+            'Gagal menyimpan perubahan ke database online. Periksa koneksi & sesi admin.',
+          );
+        }
+      } finally {
+        setIsSyncingOnline(false);
+      }
+    },
+    [authUser, isAdmin, showToast],
+  );
+
+  const handlePublishLocalCatalog = useCallback(() => {
+    const current = seriesCatalogRef.current;
+    void runOnlineSync(async (uid) => {
+      await publishCatalogToFirestore(current, uid);
+      setIsOnlineCatalogInitialized(true);
+    }, 'Katalog berhasil dipublikasikan online untuk semua penonton!');
+  }, [runOnlineSync]);
+
+  // Admin catalog management handlers (optimistic UI + live Firestore sync)
   const handleAdminSaveSeries = useCallback(
     (input: SeriesFormInput, editingSeriesId?: string): string => {
       const result = upsertSeriesInCatalog(
-        seriesCatalog,
+        seriesCatalogRef.current,
         input,
         editingSeriesId,
       );
       setSeriesCatalog(result.catalog);
-      showToast(
+      const savedIndex = result.catalog.findIndex(
+        (s) => s.id === result.savedSeries.id,
+      );
+
+      void runOnlineSync(
+        async (uid) => {
+          if (!isOnlineCatalogInitialized) {
+            await publishCatalogToFirestore(result.catalog, uid);
+            setIsOnlineCatalogInitialized(true);
+            return;
+          }
+          await saveSeriesDocToFirestore(
+            result.savedSeries,
+            Math.max(0, savedIndex),
+            uid,
+            !editingSeriesId,
+          );
+          if (!editingSeriesId) {
+            await updateCatalogSortOrderInFirestore(
+              result.catalog.map((s) => s.id),
+              uid,
+            );
+          }
+        },
         editingSeriesId
-          ? 'Informasi film berhasil diperbarui'
-          : 'Film baru ditambahkan ke katalog',
+          ? 'Informasi film diperbarui secara online'
+          : 'Film baru dipublikasikan ke katalog online',
       );
       return result.savedSeries.id;
     },
-    [seriesCatalog, showToast],
+    [isOnlineCatalogInitialized, runOnlineSync],
   );
 
   const handleAdminDeleteSeries = useCallback(
     (seriesId: string) => {
-      setSeriesCatalog((prev) => deleteSeriesFromCatalog(prev, seriesId));
+      const nextCatalog = deleteSeriesFromCatalog(
+        seriesCatalogRef.current,
+        seriesId,
+      );
+      setSeriesCatalog(nextCatalog);
       setPlayerState((prev) =>
         prev?.seriesId === seriesId ? null : prev,
       );
-      showToast('Film dihapus dari katalog');
+      void runOnlineSync(async (uid) => {
+        if (!isOnlineCatalogInitialized) {
+          await publishCatalogToFirestore(nextCatalog, uid);
+          setIsOnlineCatalogInitialized(true);
+          return;
+        }
+        await deleteSeriesDocFromFirestore(seriesId);
+      }, 'Film dihapus dari katalog online');
     },
-    [showToast],
+    [isOnlineCatalogInitialized, runOnlineSync],
   );
 
   const handleAdminSetFeaturedSeries = useCallback(
     (seriesId: string) => {
-      setSeriesCatalog((prev) => setFeaturedSeriesInCatalog(prev, seriesId));
-      showToast('Film ditetapkan sebagai Pilihan Utama Beranda');
+      const nextCatalog = setFeaturedSeriesInCatalog(
+        seriesCatalogRef.current,
+        seriesId,
+      );
+      setSeriesCatalog(nextCatalog);
+      void runOnlineSync(async (uid) => {
+        if (!isOnlineCatalogInitialized) {
+          await publishCatalogToFirestore(nextCatalog, uid);
+          setIsOnlineCatalogInitialized(true);
+          return;
+        }
+        await updateCatalogSortOrderInFirestore(
+          nextCatalog.map((s) => s.id),
+          uid,
+        );
+      }, 'Pilihan Utama Beranda diperbarui untuk semua penonton');
     },
-    [showToast],
+    [isOnlineCatalogInitialized, runOnlineSync],
   );
 
   const handleAdminSaveEpisode = useCallback(
@@ -466,60 +675,160 @@ export default function App() {
       input: EpisodeFormInput,
       editingEpisodeNumber?: number,
     ) => {
-      setSeriesCatalog((prev) =>
-        upsertEpisodeInSeries(prev, seriesId, input, editingEpisodeNumber),
+      const nextCatalog = upsertEpisodeInSeries(
+        seriesCatalogRef.current,
+        seriesId,
+        input,
+        editingEpisodeNumber,
       );
-      showToast(
+      setSeriesCatalog(nextCatalog);
+      const updatedSeries = nextCatalog.find((s) => s.id === seriesId);
+      void runOnlineSync(
+        async (uid) => {
+          if (!isOnlineCatalogInitialized) {
+            await publishCatalogToFirestore(nextCatalog, uid);
+            setIsOnlineCatalogInitialized(true);
+            return;
+          }
+          if (updatedSeries) {
+            await syncSeriesEpisodesInFirestore(
+              seriesId,
+              updatedSeries.episodes,
+              uid,
+            );
+          }
+        },
         editingEpisodeNumber !== undefined
-          ? `Episode ${editingEpisodeNumber} diperbarui`
-          : 'Episode baru ditambahkan',
+          ? `Episode ${editingEpisodeNumber} diperbarui secara online`
+          : 'Episode baru dipublikasikan online',
       );
     },
-    [showToast],
+    [isOnlineCatalogInitialized, runOnlineSync],
   );
 
   const handleAdminReorderEpisode = useCallback(
     (seriesId: string, episodeNumber: number, direction: 'up' | 'down') => {
-      setSeriesCatalog((prev) =>
-        reorderEpisodeInSeries(prev, seriesId, episodeNumber, direction),
+      const nextCatalog = reorderEpisodeInSeries(
+        seriesCatalogRef.current,
+        seriesId,
+        episodeNumber,
+        direction,
       );
-      showToast('Urutan episode diperbarui');
+      setSeriesCatalog(nextCatalog);
+      const updatedSeries = nextCatalog.find((s) => s.id === seriesId);
+      void runOnlineSync(async (uid) => {
+        if (!isOnlineCatalogInitialized) {
+          await publishCatalogToFirestore(nextCatalog, uid);
+          setIsOnlineCatalogInitialized(true);
+          return;
+        }
+        if (updatedSeries) {
+          await syncSeriesEpisodesInFirestore(
+            seriesId,
+            updatedSeries.episodes,
+            uid,
+          );
+        }
+      }, 'Urutan episode diperbarui online');
     },
-    [showToast],
+    [isOnlineCatalogInitialized, runOnlineSync],
   );
 
   const handleAdminDeleteEpisode = useCallback(
     (seriesId: string, episodeNumber: number) => {
-      setSeriesCatalog((prev) =>
-        deleteEpisodeFromSeries(prev, seriesId, episodeNumber),
+      const nextCatalog = deleteEpisodeFromSeries(
+        seriesCatalogRef.current,
+        seriesId,
+        episodeNumber,
       );
-      showToast(`Episode ${episodeNumber} dihapus`);
+      setSeriesCatalog(nextCatalog);
+      const updatedSeries = nextCatalog.find((s) => s.id === seriesId);
+      const updatedIndex = nextCatalog.findIndex((s) => s.id === seriesId);
+      void runOnlineSync(async (uid) => {
+        if (!isOnlineCatalogInitialized) {
+          await publishCatalogToFirestore(nextCatalog, uid);
+          setIsOnlineCatalogInitialized(true);
+          return;
+        }
+        if (updatedSeries) {
+          await saveSeriesDocToFirestore(
+            updatedSeries,
+            Math.max(0, updatedIndex),
+            uid,
+            false,
+          );
+          await syncSeriesEpisodesInFirestore(
+            seriesId,
+            updatedSeries.episodes,
+            uid,
+          );
+        }
+      }, `Episode ${episodeNumber} dihapus secara online`);
     },
-    [showToast],
+    [isOnlineCatalogInitialized, runOnlineSync],
   );
 
   const handleAdminResetCatalog = useCallback(() => {
     setSeriesCatalog(DRAMA_SERIES);
-    showToast('Katalog dikembalikan ke daftar bawaan');
-  }, [showToast]);
+    void runOnlineSync(async (uid) => {
+      await publishCatalogToFirestore(DRAMA_SERIES, uid);
+      setIsOnlineCatalogInitialized(true);
+    }, 'Katalog online dikembalikan ke daftar bawaan');
+  }, [runOnlineSync]);
 
   const handleAdminAttachDoodstreamFolder = useCallback(
     (seriesId: string, folderId: string, folderName: string) => {
-      setSeriesCatalog((prev) =>
-        attachDoodstreamFolderToSeries(prev, seriesId, folderId, folderName),
+      const nextCatalog = attachDoodstreamFolderToSeries(
+        seriesCatalogRef.current,
+        seriesId,
+        folderId,
+        folderName,
       );
+      setSeriesCatalog(nextCatalog);
+      void runOnlineSync(async (uid) => {
+        if (!isOnlineCatalogInitialized) {
+          await publishCatalogToFirestore(nextCatalog, uid);
+          setIsOnlineCatalogInitialized(true);
+          return;
+        }
+        await bindSeriesFolderInFirestore(seriesId, folderId, folderName, uid);
+      });
     },
-    [],
+    [isOnlineCatalogInitialized, runOnlineSync],
   );
 
   const handleAdminQuickAddUploadedEpisode = useCallback(
     (seriesId: string, payload: UploadedEpisodePayload) => {
-      setSeriesCatalog((prev) =>
-        appendUploadedEpisodeToSeries(prev, seriesId, payload),
+      const nextCatalog = appendUploadedEpisodeToSeries(
+        seriesCatalogRef.current,
+        seriesId,
+        payload,
       );
-      showToast('Video & episode baru ditambahkan ke judul film');
+      setSeriesCatalog(nextCatalog);
+      const updatedSeries = nextCatalog.find((s) => s.id === seriesId);
+      const updatedIndex = nextCatalog.findIndex((s) => s.id === seriesId);
+      void runOnlineSync(async (uid) => {
+        if (!isOnlineCatalogInitialized) {
+          await publishCatalogToFirestore(nextCatalog, uid);
+          setIsOnlineCatalogInitialized(true);
+          return;
+        }
+        if (updatedSeries) {
+          await saveSeriesDocToFirestore(
+            updatedSeries,
+            Math.max(0, updatedIndex),
+            uid,
+            false,
+          );
+          await syncSeriesEpisodesInFirestore(
+            seriesId,
+            updatedSeries.episodes,
+            uid,
+          );
+        }
+      }, 'Video & episode baru langsung tayang online');
     },
-    [showToast],
+    [isOnlineCatalogInitialized, runOnlineSync],
   );
 
   const handleAdminAttachVideoToEpisode = useCallback(
@@ -528,13 +837,44 @@ export default function App() {
       episodeNumber: number,
       payload: UploadedEpisodePayload,
     ) => {
-      setSeriesCatalog((prev) =>
-        attachUploadedVideoToEpisode(prev, seriesId, episodeNumber, payload),
+      const nextCatalog = attachUploadedVideoToEpisode(
+        seriesCatalogRef.current,
+        seriesId,
+        episodeNumber,
+        payload,
       );
-      showToast(`Video Doodstream terhubung ke Episode ${episodeNumber}`);
+      setSeriesCatalog(nextCatalog);
+      const updatedSeries = nextCatalog.find((s) => s.id === seriesId);
+      const updatedIndex = nextCatalog.findIndex((s) => s.id === seriesId);
+      void runOnlineSync(async (uid) => {
+        if (!isOnlineCatalogInitialized) {
+          await publishCatalogToFirestore(nextCatalog, uid);
+          setIsOnlineCatalogInitialized(true);
+          return;
+        }
+        if (updatedSeries) {
+          await saveSeriesDocToFirestore(
+            updatedSeries,
+            Math.max(0, updatedIndex),
+            uid,
+            false,
+          );
+          await syncSeriesEpisodesInFirestore(
+            seriesId,
+            updatedSeries.episodes,
+            uid,
+          );
+        }
+      }, `Video Episode ${episodeNumber} langsung tayang online`);
     },
-    [showToast],
+    [isOnlineCatalogInitialized, runOnlineSync],
   );
+
+  const handleAdminSignOut = useCallback(() => {
+    void signOut(auth).then(() => {
+      showToast('Berhasil keluar dari akun admin');
+    });
+  }, [showToast]);
 
   const handleAdminPreviewEpisode = useCallback(
     (series: DramaSeries, episodeNumber: number) => {
@@ -680,6 +1020,21 @@ export default function App() {
   );
 
   if (isAdminRoute) {
+    if (!authReady || isCheckingAdmin || !authUser || !isAdmin) {
+      return (
+        <>
+          <AdminAuthGate
+            authReady={authReady}
+            user={authUser}
+            isAdmin={isAdmin}
+            isCheckingAdmin={isCheckingAdmin}
+            onNavigateHome={() => navigateTo('/')}
+          />
+          {toastNode}
+        </>
+      );
+    }
+
     return (
       <>
         <AdminPanel
@@ -696,6 +1051,11 @@ export default function App() {
           onQuickAddUploadedEpisode={handleAdminQuickAddUploadedEpisode}
           onAttachVideoToEpisode={handleAdminAttachVideoToEpisode}
           onNavigateHome={() => navigateTo('/')}
+          adminEmail={authUser.email}
+          onSignOut={handleAdminSignOut}
+          isOnlineCatalogInitialized={isOnlineCatalogInitialized}
+          isSyncingOnline={isSyncingOnline}
+          onPublishLocalCatalog={handlePublishLocalCatalog}
         />
         {playerModalNode}
         {toastNode}
